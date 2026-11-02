@@ -2,7 +2,9 @@ SET 勤怠 — ローカル開発用
 
 1. ZIPを任意の場所へ解凍してください。
    set-kintai フォルダーにコードと .git（履歴）が入っています。
-   GitHubへのリモート接続は登録していません。
+   GitHubの set-kintai とコード・公開画面を同期します。
+   origin は https://github.com/nekodaisuki1234/set-kintai.git です。
+   AWSとは認証連携せず、AWS配置はローカルから行います。
 
 2. Gitがある場合、set-kintai フォルダーで確認できます。
    git status

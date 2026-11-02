@@ -15,18 +15,23 @@ let storageProblem="",data=null,repository=null,unsubscribe=null,loading=false,s
 const pendingControls=new Map();
 let punchFeedback=null,feedbackTimer,warningTimer;
 let editorReturn="records";const editorDrafts=new Map();
+let submissionRepair=null,repairReturnRequested=false;
 const editorTimeSignatures=new Map();
 const homeDrafts=new Map(),listPositions=new Map();let lastMinute="";
+let homeTimeOpen=false,recordsFilter='all',recordsChartOpen=false;
 const queuedPhaseDays=new Set();let phaseSaveTimer=null;
 let homeWorkTab='note',editorWorkTab='note',leaveConfirmation=null;
 let pushTesting=false;
+let notificationLanding=config.mode==='local'&&new URLSearchParams(location.search).get('notifications')==='1';
+let undoChange=null;
 const homeDraft=(day=now.day)=>homeDrafts.get(day)||{};
 function setHomeDraft(key,value,day=now.day){homeDrafts.set(day,{...homeDraft(day),[key]:value});}
 function clearHomeDraft(...keys){const draft={...homeDraft()};keys.forEach(key=>delete draft[key]);homeDrafts.set(now.day,draft);}
 function clearSavedHomeDraft(day,values){const draft={...homeDraft(day)};for(const [key,value] of Object.entries(values))if(JSON.stringify(draft[key])===JSON.stringify(value))delete draft[key];homeDrafts.set(day,draft);}
-function rememberList(){if(view==="records"&&$("recordList"))listPositions.set(selectedMonth,{top:$("recordList").scrollTop,page:window.scrollY});}
-function rememberRoute(replace=false){try{history[replace?'replaceState':'pushState']({paper:true,view,month:selectedMonth,day:editDay,origin:editorReturn},"");}catch{}}
-function restorePosition(){if(view==="records"&&listPositions.has(selectedMonth))window.scrollTo(0,listPositions.get(selectedMonth).page);else root.scrollIntoView({block:"start"});}
+const listPositionKey=()=>selectedMonth+':'+recordsFilter;
+function rememberList(){if(view==="records"&&$("recordList"))listPositions.set(listPositionKey(),{page:window.scrollY});}
+function rememberRoute(replace=false){try{history[replace?'replaceState':'pushState']({paper:true,view,month:selectedMonth,day:editDay,origin:editorReturn,recordFilter:recordsFilter,repair:submissionRepair},"");}catch{}}
+function restorePosition(){if(view==="records"&&listPositions.has(listPositionKey()))window.scrollTo(0,listPositions.get(listPositionKey()).page);else root.scrollIntoView({block:"start"});}
 const record=day=>data.records[day]||C.empty(data);
 function editorRecord(day){const saved=record(day),draft=homeDraft(day);return {...saved,...Object.fromEntries(['note','locationId','phases'].filter(key=>Object.hasOwn(draft,key)).map(key=>[key,draft[key]]))};}
 function sameRecord(a,b){
@@ -115,7 +120,7 @@ function syncLeaveStatus(){
  }
 }
 function leaveRequestedAt(current){return new Date(current.day+'T'+(current.full||C.time(current.minutes)+':00')+'+09:00').toISOString();}
-function openLeaveRequest(editorMode=false){
+function openLeaveRequest(editorMode=false,repairIntent=null){
  if(saving)return;
  const current=clockNow();if(!editorMode&&current.day!==renderedDay){render();toast('日付が変わりました。今日の画面を確認して再操作してください。',{warning:true});return;}
  now=current;const day=editorMode?editDay:renderedDay,leave=$(editorMode?'editLeave':'leaveType').value,sourceDay=leave==='comp'?$(editorMode?'editSourceDay':'leaveSourceDay').value:'',r=record(day),last=latestLeaveRequest(day);
@@ -123,7 +128,7 @@ function openLeaveRequest(editorMode=false){
  if(last&&last.leave===leave&&last.sourceDay===sourceDay&&r.leave===leave&&(r.sourceDay||'')===sourceDay){toast('同じ内容の申請は、この端末に保存済みです。勤怠の変更は「更新」で保存してください。管理者への送信先は未接続です。');return;}
  if(editorMode&&C.PROJECTS.some(key=>$("editAlloc"+key).value.trim()===""||!$("editAlloc"+key).validity.valid)){toast("工数を0〜24時間で入力してください。",{warning:true});return;}
  if(editorMode)captureEditor();
- const edited=editorMode?C.clone(readEditor().record):null,id='lr-'+(globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,12)),snapshot={id,day,leave,sourceDay,revision:data.revision,editor:editorMode,record:edited,homeDraft:homeDraft(day)};
+ const edited=editorMode?C.clone(readEditor().record):null,id='lr-'+(globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,12)),snapshot={id,day,leave,sourceDay,revision:data.revision,editor:editorMode,record:edited,homeDraft:homeDraft(day),repair:repairIntent&&repairActive()?submissionRepair:null,repairIntent};
  const checked=C.prepareLeaveRequest(data,{id,day,leave,sourceDay,requestedAt:leaveRequestedAt(current)},current,editorMode?{record:edited,strictAllocation:true}:{});
  if(!checked.ok){toast(checked.error,{warning:true});return;}
  openDialog(dialogHeader(leave?'休暇申請の確認':'休暇の解除申請',dayLabel(day))+'<p class="leave-request-message">'+(leave?'管理者に休暇申請を行います':'管理者に休暇の解除を申請します')+'</p><dl class="summary-lines leave-request-summary"><div><dt>対象日</dt><dd>'+h(dayLabel(day))+'</dd></div><div><dt>休暇区分</dt><dd>'+h(C.LEAVES[leave])+'</dd></div>'+(sourceDay?'<div><dt>元の休日出勤</dt><dd>'+h(dayLabel(sourceDay))+'</dd></div>':'')+'</dl>'+(C.fullLeave({leave})?'<p class="panel-note">確定すると出勤・退勤時刻をクリアし、実働・工数を0時間にします。</p>':'')+'<div class="paper-notice"><strong>管理者への送信先は未接続です</strong><p>ここでは申請内容をこのブラウザに保存します。管理者にはまだ送信されません。承認待ちは行わず、確定した休暇を勤怠へ反映します。</p></div>'+dialogError()+'<div class="paper-actions"><button type="button" class="paper-button secondary" data-action="close-dialog">キャンセル</button><button type="button" class="paper-button" data-action="confirm-leave-request">送信する</button></div>');
@@ -140,6 +145,7 @@ async function confirmLeaveRequest(){
  const resolved=snapshot.editor&&homeDraft(day)===snapshot.homeDraft?{...prepared.record,...Object.fromEntries(['note','locationId','phases'].filter(key=>Object.hasOwn(snapshot.homeDraft,key)).map(key=>[key,snapshot.homeDraft[key]]))}:{leave,sourceDay};
  clearSavedHomeDraft(day,resolved);if(C.fullLeave(prepared.record))clearSavedHomeDraft(day,{allocation:homeDraft(day).allocation});
  if(leaveConfirmation===snapshot)closeDialog();
+ if(snapshot.repair&&continueSubmissionRepair(day,snapshot.repairIntent,snapshot.repair))return;
  if(view==='home'&&renderedDay===clockNow().day)syncHome();else render();
  if(prepared.warnings?.length)showWarning(dayLabel(day)+'：'+prepared.warnings.join(' '));
 }
@@ -154,7 +160,36 @@ function schedulePhaseSave(){
   schedulePhaseSave();
  },0);
 }
-function toast(message,{warning=false}={}){if(embed)return;clearTimeout(warningTimer);const node=$("studyToast");node.textContent=message;node.classList.toggle("is-warning",warning);node.classList.add("visible");clearTimeout(toastTimer);toastTimer=setTimeout(()=>node.classList.remove("visible"),warning?7000:3600);}
+function dismissUndo(){
+ undoChange=null;const button=$('undoLastChange');if(button)button.remove();$('studyToast')?.classList.remove('has-undo');
+}
+function toast(message,{warning=false,undo=null}={}){
+ if(embed)return;clearTimeout(warningTimer);dismissUndo();const node=$('studyToast');node.textContent=message;
+ node.classList.toggle('is-warning',warning);node.classList.add('visible');clearTimeout(toastTimer);
+ if(undo){undoChange=undo;node.classList.add('has-undo');const button=document.createElement('button');button.type='button';button.id='undoLastChange';button.dataset.action='undo-change';button.textContent='元に戻す';node.appendChild(button);}
+ toastTimer=setTimeout(()=>{node.classList.remove('visible');dismissUndo();},undo?15000:warning?7000:3600);
+}
+function undoSnapshot(day){
+ return {day,record:data.records[day]?C.clone(data.records[day]):null,home:homeDrafts.has(day)?C.clone(homeDrafts.get(day)):null,editor:editorDrafts.has(day)?C.clone(editorDrafts.get(day)):null,homeToken:homeDrafts.get(day),editorToken:editorDrafts.get(day)};
+}
+function refreshUndoDrafts(snapshot){
+ if(homeDrafts.get(snapshot.day)!==snapshot.homeToken)snapshot.home=homeDrafts.has(snapshot.day)?C.clone(homeDrafts.get(snapshot.day)):null;
+ if(editorDrafts.get(snapshot.day)!==snapshot.editorToken)snapshot.editor=editorDrafts.has(snapshot.day)?C.clone(editorDrafts.get(snapshot.day)):null;
+}
+function offerUndo(snapshot,message){toast(message,{undo:{...snapshot,revision:data.revision}});}
+async function restoreUndo(){
+ const snapshot=undoChange;if(!snapshot||saving)return;
+ if(snapshot.revision!==data.revision){toast('その後に変更があるため、元に戻せません。勤怠の内容を確認してください。',{warning:true});return;}
+ const {day}=snapshot,current=clockNow(),relation=C.validateRecordChange(data,day,snapshot.record,current);
+ if(!relation.ok){toast(relation.error,{warning:true});return;}
+ const pendingHome=homeDrafts.get(day),pendingEditor=editorDrafts.get(day),editorAtStart=pendingEditor||(view==='editor'&&editDay===day?readEditor():null);
+ const next=C.clone(data);if(snapshot.record)next.records[day]=C.clone(snapshot.record);else delete next.records[day];C.invalidateSubmissions(next,day);
+ if(!await commit(next,dayLabel(day)+'の取消を元に戻しました',{expectedRevision:snapshot.revision}))return;
+ if(homeDrafts.get(day)===pendingHome){if(snapshot.home)homeDrafts.set(day,C.clone(snapshot.home));else homeDrafts.delete(day);}
+ const latestEditor=editorDrafts.get(day);
+ if(latestEditor===pendingEditor||editorAtStart&&latestEditor&&sameRecord(latestEditor.record,editorAtStart.record)&&latestEditor.breakText===editorAtStart.breakText){if(snapshot.editor)editorDrafts.set(day,C.clone(snapshot.editor));else editorDrafts.delete(day);}
+ now=current;const top=window.scrollY;render();window.scrollTo(0,top);
+}
 function showError(message){error=message;const box=dialog.open?$("dialogError"):$("previewError");if(box)box.textContent=message;toast(message);}
 function showWarning(message){
  toast(message,{warning:true});
@@ -174,7 +209,7 @@ function setSaving(value){
  if(value)syncPendingControls();else{for(const [node,disabled] of pendingControls)node.disabled=disabled;pendingControls.clear();}
  if($("punchActions"))$("punchActions").innerHTML=punches();
  syncWorkStatus();
- syncLeaveStatus();syncPushSettings();
+ syncLeaveStatus();syncPushSettings();syncSaveStatus();
  if(!value)schedulePhaseSave();
 }
 function beginSave(){
@@ -238,7 +273,7 @@ function punches(){
   const success=!!value&&punchFeedback?.time===value&&punchFeedback?.kind===kind&&punchFeedback.day===now.day&&Date.now()<punchFeedback.until;
   const caption=success?'<span class="punch-success"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>'+name+'完了</span>':'<span class="punch-caption">'+name+'打刻</span>';
   return '<button id="'+kind+'Punch" type="button" class="punch-button'+(value?' is-recorded':'')+(success?' is-success':'')+'" data-action="punch" data-kind="'+kind+'" aria-label="'+name+'打刻'+(value?'、'+value+'。現在時刻で上書き':'')+'" '+(disabled?'disabled':'')+'>'+caption+(value?'<time class="punch-time">'+(kind==="end"&&r.overnight?'翌 ':'')+value+'</time>':'')+'</button>';
- }).join("")+'<button id="resetPunch" type="button" class="punch-button punch-reset" data-action="reset-punches" '+(locked||!r.start&&!r.end?'disabled':'')+'><span class="punch-caption">取消</span></button>';
+ }).join("")+'<button id="resetPunch" type="button" class="punch-button punch-reset" data-action="reset-punches" aria-label="今日の出勤・退勤と工数を取り消す" '+(locked||!r.start&&!r.end?'disabled':'')+'><span class="punch-caption">打刻取消</span></button>';
 }
 function lockPunches(ms=500){lockUntil=Date.now()+ms;if($("punchActions"))$("punchActions").innerHTML=punches();setTimeout(()=>{if($("punchActions"))$("punchActions").innerHTML=punches();},ms+10);}
 function animatePunch(kind){
@@ -323,7 +358,7 @@ function workFields(){
 }
 function home(){
  const r=record(now.day),off=C.fullLeave(r);
- return '<section class="punch-pane"><div class="dayline"><h1>今日の勤怠</h1><strong id="punchState" class="state-tag">'+status(r)+'</strong></div><div id="homeOverview" class="home-overview">'+homeOverview()+'</div><div class="hero-composition"><time class="hero-date" datetime="'+now.day+'">'+dayLabel(now.day)+'<span class="hero-holiday"'+(C.holiday(now.day)?'':' aria-hidden="true"')+'>'+h(C.holiday(now.day))+'</span></time><div class="clock-wrap"><time id="paperClock" class="digital-clock" datetime="'+now.day+'T'+now.full+'+09:00">'+now.time+'<span class="seconds">:'+now.full.slice(-2)+'</span></time><p class="clock-caption">'+(sampleClock?'サンプル時刻':'現在時刻')+'・日本時間'+(sampleClock?' <button type="button" class="clock-live" data-action="live">現在時刻に戻す</button>':'')+'</p></div></div><div id="punchActions" class="punch-actions" aria-label="出退勤の打刻">'+punches()+'</div><section class="paper-form-card home-time-card" aria-label="勤務時間の入力"><div class="time-area"><p id="timeHelp" class="time-help"><strong>時刻は手入力・修正できます</strong><span>自動保存</span></p><div class="time-fields">'+["start","end"].map(k=>'<label for="'+k+'Time"><span>'+ (k==="start"?'出勤':'退勤')+'時刻を'+(r[k]?'編集':'入力')+'</span><input class="time-input" id="'+k+'Time" type="time" value="'+r[k]+'" data-time="'+k+'" aria-describedby="timeHelp" '+(off||k==="end"&&!r.start?'disabled':'')+'></label>').join("")+'</div><label class="nextday"><input id="nextday" type="checkbox" '+(r.overnight?'checked ':'')+(off||!r.start?'disabled':'')+'>翌日に退勤</label></div><div id="restEditor">'+restEditor()+'</div></section>'+'</section><nav class="detail-tabs" aria-label="今日の詳細" role="tablist">'+DETAIL_TABS.map(([id,ic,label])=>'<button type="button" role="tab" id="detailTab-'+id+'" data-action="detail" data-detail="'+id+'" aria-controls="detailPanel-'+id+'" aria-selected="'+(detail===id)+'" tabindex="'+(detail===id?'0':'-1')+'">'+icon(ic)+'<span>'+label+'</span></button>').join("")+'</nav><div id="detailArea">'+detailPanel()+'</div><div id="weekArea">'+week()+'</div>';
+ return '<section class="punch-pane"><div class="dayline"><h1>今日の勤怠</h1><strong id="punchState" class="state-tag">'+status(r)+'</strong></div><div id="homeOverview" class="home-overview">'+homeOverview()+'</div><div class="hero-composition"><time class="hero-date" datetime="'+now.day+'">'+dayLabel(now.day)+'<span class="hero-holiday"'+(C.holiday(now.day)?'':' aria-hidden="true"')+'>'+h(C.holiday(now.day))+'</span></time><div class="clock-wrap"><time id="paperClock" class="digital-clock" datetime="'+now.day+'T'+now.full+'+09:00">'+now.time+'<span class="seconds">:'+now.full.slice(-2)+'</span></time><p class="clock-caption">'+(sampleClock?'サンプル時刻':'現在時刻')+'・日本時間'+(sampleClock?' <button type="button" class="clock-live" data-action="live">現在時刻に戻す</button>':'')+'</p></div></div><div id="punchActions" class="punch-actions" aria-label="出退勤の打刻">'+punches()+'</div><section class="paper-form-card home-time-card" aria-label="勤務時間の入力"><details id="homeTimeEditor" class="home-time-disclosure" '+(homeTimeOpen?' open':'')+'><summary>'+editIcon()+'<span>出退勤時刻を手入力・修正</span><span class="disclosure-chevron" aria-hidden="true">⌄</span></summary><div class="time-area"><p id="timeHelp" class="time-help"><strong>時刻は手入力・修正できます</strong><span>自動保存</span></p><div class="time-fields">'+["start","end"].map(k=>'<label for="'+k+'Time"><span>'+ (k==="start"?'出勤':'退勤')+'時刻を'+(r[k]?'編集':'入力')+'</span><input class="time-input" id="'+k+'Time" type="time" value="'+r[k]+'" data-time="'+k+'" aria-describedby="timeHelp" '+(off||k==="end"&&!r.start?'disabled':'')+'></label>').join("")+'</div><label class="nextday"><input id="nextday" type="checkbox" '+(r.overnight?'checked ':'')+(off||!r.start?'disabled':'')+'>翌日に退勤</label></div></details><div id="restEditor">'+restEditor()+'</div></section>'+'</section><nav class="detail-tabs" aria-label="今日の詳細" role="tablist">'+DETAIL_TABS.map(([id,ic,label])=>'<button type="button" role="tab" id="detailTab-'+id+'" data-action="detail" data-detail="'+id+'" aria-controls="detailPanel-'+id+'" aria-selected="'+(detail===id)+'" tabindex="'+(detail===id?'0':'-1')+'">'+icon(ic)+'<span>'+label+'</span></button>').join("")+'</nav><div id="detailArea">'+detailPanel()+'</div><div id="weekArea">'+week()+'</div>';
 }
 function monthChooser(){return '<div class="month-chooser"><button type="button" class="month-arrow" data-action="month-prev" aria-label="前の月" '+(selectedMonth<=firstMonth()?'disabled':'')+'>←</button><label><span class="sr-only">表示する月</span><input class="month-input" id="monthInput" type="month" min="'+C.firstDay(data).slice(0,7)+'" max="'+now.day.slice(0,7)+'" value="'+selectedMonth.slice(0,7)+'"></label><button type="button" class="month-arrow" data-action="month-next" aria-label="次の月" '+(selectedMonth>=C.month(now.day).start?'disabled':'')+'>→</button></div>';}
 function monthChart(){
@@ -336,14 +371,14 @@ function monthHolidayNotice(period){
  return '<aside class="month-holidays" aria-label="'+label+'"><span class="month-holidays-label">今月の祝日</span>'+(days.length?'<ul class="month-holiday-list">'+days.map(day=>'<li><time datetime="'+day+'">'+Number(day.slice(5,7))+'/'+Number(day.slice(8))+'</time><span>'+h(C.holiday(day))+'</span></li>').join('')+'</ul>':'<p class="month-holiday-empty">'+(known?'今月の祝日はありません':'この月の祝日データは未収録です')+'</p>')+'</aside>';
 }
 function records(){
- const p=C.month(selectedMonth),summary=C.summary(data,p,now);
- const rows=C.dates(p.start,p.end).map(d=>{
+ const p=C.month(selectedMonth),summary=C.summary(data,p,now),missingDays=C.pastMissing(data,now).filter(day=>day>=p.start&&day<=p.end),days=recordsFilter==='missing'?missingDays:C.dates(p.start,p.end);
+ const rows=days.map(d=>{
   const r=data.records[d],n=C.worked(r,d,now),future=d>now.day,before=d<C.firstDay(data),holiday=C.holiday(d),dayStatus=before?'利用開始前':future?'これから':C.fullLeave(r)?C.LEAVES[r.leave]:r?.start?(r.leave?C.LEAVES[r.leave]+' · ':'')+(r.end?'休憩 '+C.short(r.breakMinutes):'退勤未入力'):C.workday(d)?'未入力':'休み';
   const range=before?'利用開始前':r?.start?r.start+' → '+(r.end?(r.overnight?'翌 ':'')+r.end:'—'):C.fullLeave(r)?dayStatus:holiday||dayStatus;
   const caption=r?.start?[holiday,dayStatus,placeName(r.locationId)].filter(Boolean).join(' · '):holiday?(C.fullLeave(r)?holiday:'祝日'):'';
   return '<button type="button" class="record-item paper-record'+(d===now.day?' is-today':'')+(holiday?' is-holiday':'')+'" data-action="edit-day" data-day="'+d+'" '+(future||before?'disabled':'')+' aria-label="'+h(dayLabel(d)+' '+holiday+' '+range)+'"><span class="record-date weekday-'+C.weekday(d)+'"><b>'+Number(d.slice(8))+'</b><small>'+C.WEEK[C.weekday(d)]+'曜日</small></span><span class="record-times">'+h(range)+'<small>'+h(caption)+'</small></span><span class="record-hours">'+(r?.start?C.short(n):'—')+'<span class="row-chevron" aria-hidden="true">›</span></span></button>';
  }).join("");
- return '<section class="subpage"><h1>'+Number(selectedMonth.slice(5,7))+'月の勤怠</h1><p class="subpage-lede">日付を選んで、打刻・休暇・工数を確認・修正できます。</p>'+monthChooser()+monthHolidayNotice(p)+monthChart()+'<div class="month-summary"><span>勤務 '+summary.days+'日</span><strong>計 '+C.short(summary.minutes)+'</strong><button type="button" class="text-button" data-action="export-month">Excel出力</button></div>'+absenceSummary(summary.absenceMinutes,"monthAbsence",p.start)+'<div class="record-list" id="recordList" aria-label="日別の勤怠">'+rows+'</div><p class="week-note">出勤 → 退勤 ／ 実働時間　未来の日付は編集できません。</p></section>';
+ return '<section class="subpage records-page"><h1>'+Number(selectedMonth.slice(5,7))+'月の勤怠</h1><p class="subpage-lede">日付を選んで、打刻・休暇・工数を確認・修正できます。</p>'+monthChooser()+monthHolidayNotice(p)+'<div class="month-summary"><span>勤務 '+summary.days+'日</span><strong>計 '+C.short(summary.minutes)+'</strong><button type="button" class="text-button" data-action="export-month">Excel出力</button></div>'+absenceSummary(summary.absenceMinutes,"monthAbsence",p.start)+'<details id="recordsChart" class="records-chart-disclosure"'+(recordsChartOpen?' open':'')+'><summary>'+icon('chart')+'<span>月ごとの勤務時間</span><span class="disclosure-chevron" aria-hidden="true">⌄</span></summary>'+monthChart()+'</details><div class="record-controls" aria-label="勤怠一覧の表示"><div class="record-filters" role="group" aria-label="表示する記録"><button type="button" data-action="record-filter" data-filter="all" aria-pressed="'+(recordsFilter==='all')+'">すべて</button><button type="button" data-action="record-filter" data-filter="missing" aria-pressed="'+(recordsFilter==='missing')+'">未入力 <span>'+missingDays.length+'</span></button></div><button type="button" class="record-today" data-action="records-today">今日へ</button></div><div class="record-list" id="recordList" aria-label="'+(recordsFilter==='missing'?'過去の平日の未入力':'日別の勤怠')+'">'+(rows||'<p class="records-empty" role="status">この月の過去の平日に未入力はありません。</p>')+'</div><p class="week-note">'+(recordsFilter==='missing'?'今日より前の平日が対象です。土日祝と全日休暇を除きます。':'出勤 → 退勤 ／ 実働時間　未来の日付は編集できません。')+'</p></section>';
 }
 function submit(){
  const periods=C.periods(selectedMonth);
@@ -440,6 +475,7 @@ function invalidPlace(s){
 function captureDefaults(){
  if(!$('defaultsForm'))return;
  defaultsDraft={locationId:$('defaultPlace').value,note:$('defaultNote').value,phases:[...document.querySelectorAll('#defaultsPhaseChoices [aria-pressed="true"]')].map(button=>button.dataset.phase),breakMinutes:$('defaultBreak').value};
+ syncSaveStatus();
 }
 function defaultsChanged(draft){
  return draft.locationId!==data.defaults.locationId||draft.note!==data.defaults.note||C.PHASE_IDS.some(id=>(draft.phases||[]).includes(id)!==(data.defaults.phases||[]).includes(id))||String(draft.breakMinutes).trim()===''||Number(draft.breakMinutes)!==data.defaults.breakMinutes;
@@ -455,8 +491,26 @@ function syncDefaultsDraft(){
  document.querySelectorAll('[data-action="default-break"]').forEach(button=>button.setAttribute('aria-pressed',String(defaultsDraft.breakMinutes.trim()!==''&&Number(defaultsDraft.breakMinutes)===Number(button.dataset.minutes))));
  $('defaultsDraftState').textContent=defaultsChanged(defaultsDraft)?'未保存の変更あり':'保存済みの内容';
 }
+function saveToolbar(form,label='更新'){
+ const context=form==='dayForm'?dayLabel(editDay):form==='defaultsForm'?'いつもの勤務':'勤務表の設定';
+ const primary=form==='dayForm'&&typeof repairSaveLabel==='function'?(repairSaveLabel()||label):label;
+ const extra=form==='dayForm'&&typeof repairToolbarAction==='function'?repairToolbarAction():'';
+ return '<div id="formSaveBar" class="form-save-bar'+(extra?' has-repair-actions':'')+'" data-form="'+form+'"><div class="form-save-summary"><span class="form-save-context">'+h(context)+'</span><span id="formSaveStatus" role="status" aria-live="polite">変更は更新で保存</span></div><div class="save-toolbar-actions">'+extra+'<button class="paper-button form-save-primary" type="submit">'+h(primary)+'</button></div></div>';
+}
+function syncSaveStatus(){
+ const bar=$('formSaveBar'),status=$('formSaveStatus');if(!bar||!status||!data)return;
+ let dirty=false,recorded=true;
+ if(bar.dataset.form==='dayForm'&&$('dayForm')){
+  dirty=!sameRecord(readEditor().record,record(editDay))||C.PROJECTS.some(key=>$('editAlloc'+key).value.trim()==='');recorded=!!data.records[editDay];
+ }else if(bar.dataset.form==='defaultsForm')dirty=!!defaultsDraft&&defaultsChanged(defaultsDraft);
+ else if(bar.dataset.form==='settingsForm')dirty=!!settingsDraft&&JSON.stringify(settingsDraft)!==JSON.stringify(data.settings);
+ bar.dataset.saveState=saving?'saving':dirty?'dirty':'saved';
+ status.textContent=saving?'保存中…':dirty?'未保存の変更あり':recorded?'保存済み':'変更は更新で保存';
+ bar.querySelectorAll('.save-toolbar-actions button').forEach(button=>button.disabled=saving);
+ root.classList.add('has-save-toolbar');
+}
 function defaultsSettings(d){
- return '<section class="settings-section"><form id="defaultsForm" class="paper-form-card defaults-settings-card"><div class="defaults-summary">'+icon('settings')+'<div><h2>新しい日の初期値</h2><p>自分の勤務場所・作業概要・フェーズ・休憩の初期値です。</p><span id="defaultsDraftState" role="status">'+(defaultsChanged(d)?'未保存の変更あり':'保存済みの内容')+'</span></div></div><div class="defaults-fields"><div class="form-field"><label class="paper-label" for="defaultPlace">いつもの勤務場所</label><select class="paper-input" id="defaultPlace">'+placeOptions(d.locationId)+'</select></div><div class="form-field"><label class="paper-label" for="defaultNote">共通の作業概要</label><textarea class="paper-input" id="defaultNote" maxlength="1000" rows="3" placeholder="新しい日に入力しておく作業内容">'+h(d.note)+'</textarea><p class="field-help">新しい日の作業内容に入力する文章です。</p></div>'+phaseChoices(d.phases||[],'defaults')+'<div class="form-field"><label class="paper-label" for="defaultBreak">初期の休憩時間</label><div class="field-unit"><input class="paper-input" id="defaultBreak" type="number" min="0" max="1440" step="1" inputmode="numeric" required value="'+h(d.breakMinutes)+'" aria-label="初期の休憩時間（分）" aria-describedby="defaultBreakHint"><span aria-hidden="true">分</span></div><p id="defaultBreakHint" class="field-help" role="status">'+defaultBreakText(d.breakMinutes)+'</p><div class="default-break-presets" role="group" aria-label="初期休憩時間の候補">'+PRESETS.map(minutes=>'<button type="button" data-action="default-break" data-minutes="'+minutes+'" aria-pressed="'+(String(d.breakMinutes).trim()!==''&&Number(d.breakMinutes)===minutes)+'">'+minutes+'分'+(minutes===60?'<span class="sr-only">（標準の1時間）</span>':'')+'</button>').join('')+'</div></div></div><p class="settings-save-hint">変更は「更新」で保存し、新しい日の入力に使います。</p><div class="paper-actions settings-save-row"><button type="button" class="paper-button secondary" data-action="reset-defaults">標準に戻す</button><button type="submit" class="paper-button">更新</button></div></form><button type="button" class="totals-button" data-action="totals">勤怠時間合計 <span aria-hidden="true">→</span></button></section>';
+ return '<section class="settings-section"><form id="defaultsForm" class="paper-form-card defaults-settings-card"><div class="defaults-summary">'+icon('settings')+'<div><h2>新しい日の初期値</h2><p>自分の勤務場所・作業概要・フェーズ・休憩の初期値です。</p><span id="defaultsDraftState" role="status">'+(defaultsChanged(d)?'未保存の変更あり':'保存済みの内容')+'</span></div></div><div class="defaults-fields"><div class="form-field"><label class="paper-label" for="defaultPlace">いつもの勤務場所</label><select class="paper-input" id="defaultPlace">'+placeOptions(d.locationId)+'</select></div><div class="form-field"><label class="paper-label" for="defaultNote">共通の作業概要</label><textarea class="paper-input" id="defaultNote" maxlength="1000" rows="3" placeholder="新しい日に入力しておく作業内容">'+h(d.note)+'</textarea><p class="field-help">新しい日の作業内容に入力する文章です。</p></div>'+phaseChoices(d.phases||[],'defaults')+'<div class="form-field"><label class="paper-label" for="defaultBreak">初期の休憩時間</label><div class="field-unit"><input class="paper-input" id="defaultBreak" type="number" min="0" max="1440" step="1" inputmode="numeric" required value="'+h(d.breakMinutes)+'" aria-label="初期の休憩時間（分）" aria-describedby="defaultBreakHint"><span aria-hidden="true">分</span></div><p id="defaultBreakHint" class="field-help" role="status">'+defaultBreakText(d.breakMinutes)+'</p><div class="default-break-presets" role="group" aria-label="初期休憩時間の候補">'+PRESETS.map(minutes=>'<button type="button" data-action="default-break" data-minutes="'+minutes+'" aria-pressed="'+(String(d.breakMinutes).trim()!==''&&Number(d.breakMinutes)===minutes)+'">'+minutes+'分'+(minutes===60?'<span class="sr-only">（標準の1時間）</span>':'')+'</button>').join('')+'</div></div></div><p class="settings-save-hint">変更は「更新」で保存し、新しい日の入力に使います。</p><div class="paper-actions settings-save-row"><button type="button" class="paper-button secondary" data-action="reset-defaults">標準に戻す</button></div>'+saveToolbar('defaultsForm')+'</form><button type="button" class="totals-button" data-action="totals">勤怠時間合計 <span aria-hidden="true">→</span></button></section>';
 }
 function pushDisplay(){
  const state=window.PaperPush?.getState()||{canTest:false,reason:'unsupported',permission:'default'};
@@ -498,8 +552,8 @@ function settings(){
  const d=defaultsDraft||data.defaults,s=settingsDraft||data.settings;
  let body;
  if(settingsTab==='defaults')body=defaultsSettings(d);
- else body='<section class="settings-section"><form id="settingsForm"><section class="paper-form-card"><div class="settings-card-heading"><h2 class="form-card-heading">勤務時間</h2><p>勤務表に使う時間を設定します。</p></div><div class="hours-range"><div class="form-field"><label for="minHours"><span>基準時間の下限</span></label><div class="field-unit"><input id="minHours" class="paper-input" type="number" min="0" max="744" step="any" required value="'+(Number.isFinite(s.minHours)?s.minHours:'')+'" aria-label="基準時間の下限（時間）"><span aria-hidden="true">時間</span></div></div><span aria-hidden="true">〜</span><div class="form-field"><label for="maxHours"><span>基準時間の上限</span></label><div class="field-unit"><input id="maxHours" class="paper-input" type="number" min="0" max="744" step="any" required value="'+(Number.isFinite(s.maxHours)?s.maxHours:'')+'" aria-label="基準時間の上限（時間）"><span aria-hidden="true">時間</span></div></div></div>'+planningSettings(s)+'</section>'+projectSettings(s)+placeSettings(s)+'<div class="settings-save-row settings-sheet-actions"><p class="settings-save-hint">勤務予定・プロジェクト・作業場所をまとめて保存します。</p><button class="paper-button full-width" type="submit">更新</button></div></form></section>';
- return '<section class="subpage"><h1>設定</h1><p class="subpage-lede">いつもの入力と、勤務表に使う情報を整えます。</p><a class="login-preview-link" href="./a-paper-login.html?v=paper-reminders34" target="_blank" rel="noopener" aria-label="Microsoft 365ログイン画面のプレビュー（新しいタブで開く）"><span>Microsoft 365ログイン</span><span>プレビュー <span aria-hidden="true">↗</span></span></a>'+pushSettings()+'<div class="settings-tabs" aria-label="設定項目">'+[['defaults','いつもの勤務'],['sheet','勤務表の設定']].map(([id,label])=>'<button type="button" data-action="settings-tab" data-tab="'+id+'" aria-pressed="'+(settingsTab===id)+'">'+label+'</button>').join('')+'</div>'+body+'</section>';
+ else body='<section class="settings-section"><form id="settingsForm"><section class="paper-form-card"><div class="settings-card-heading"><h2 class="form-card-heading">勤務時間</h2><p>勤務表に使う時間を設定します。</p></div><div class="hours-range"><div class="form-field"><label for="minHours"><span>基準時間の下限</span></label><div class="field-unit"><input id="minHours" class="paper-input" type="number" min="0" max="744" step="any" required value="'+(Number.isFinite(s.minHours)?s.minHours:'')+'" aria-label="基準時間の下限（時間）"><span aria-hidden="true">時間</span></div></div><span aria-hidden="true">〜</span><div class="form-field"><label for="maxHours"><span>基準時間の上限</span></label><div class="field-unit"><input id="maxHours" class="paper-input" type="number" min="0" max="744" step="any" required value="'+(Number.isFinite(s.maxHours)?s.maxHours:'')+'" aria-label="基準時間の上限（時間）"><span aria-hidden="true">時間</span></div></div></div>'+planningSettings(s)+'</section>'+projectSettings(s)+placeSettings(s)+'<div class="settings-save-row settings-sheet-actions"><p class="settings-save-hint">勤務予定・プロジェクト・作業場所をまとめて保存します。</p></div>'+saveToolbar('settingsForm')+'</form></section>';
+ return '<section class="subpage"><h1>設定</h1><p class="subpage-lede">いつもの入力と、勤務表に使う情報を整えます。</p><div class="settings-tabs" aria-label="設定項目">'+[['defaults','いつもの勤務'],['sheet','勤務表の設定']].map(([id,label])=>'<button type="button" data-action="settings-tab" data-tab="'+id+'" aria-pressed="'+(settingsTab===id)+'">'+label+'</button>').join('')+'</div>'+body+'<section class="settings-utilities" aria-label="アカウント・通知"><a class="login-preview-link" href="./a-paper-login.html?v=paper-reminders34" target="_blank" rel="noopener" aria-label="Microsoft 365ログイン画面のプレビュー（新しいタブで開く）"><span>Microsoft 365ログイン</span><span>プレビュー <span aria-hidden="true">↗</span></span></a>'+pushSettings()+'</section></section>';
 }
 function nav(){return '<nav class="app-nav" aria-label="メインナビゲーション">'+[["home","home","ホーム"],["records","calendar","勤怠"],["submit","send","提出"],["settings","settings","設定"]].map(([id,ic,label])=>'<button id="nav-'+id+'" type="button" class="nav-button" data-action="tab" data-tab="'+id+'" '+(view===id||view==="editor"&&id==="records"||view==="missing"&&id==="home"?'aria-current="page"':'')+'>'+icon(ic)+'<span>'+label+'</span></button>').join("")+'</nav>';}
 function logoutButton(){return '<button type="button" class="logout-button" data-action="logout"'+(saving?' disabled':'')+'><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4H4v16h6m4-13 5 5-5 5m-6-5h13"/></svg><span>ログアウト</span></button>';}
@@ -520,19 +574,17 @@ function render(){
   if(embed)root.inert=true;
   return;
  }
- now=clockNow();renderedDay=now.day;
+ now=clockNow();renderedDay=now.day;root.classList.toggle('has-save-toolbar',view==='settings'||view==='editor');
  const employee=C.employee(data),employeeMeta=[employee.department,employee.id].filter(Boolean).join(' / ');
  root.innerHTML='<header class="app-masthead"><button type="button" class="wordmark" data-action="home" aria-label="SET ホーム">SET</button><div class="account-controls"><div class="employee"><b>'+h(employee.name||'利用者未設定')+'</b>'+h(employeeMeta)+'</div>'+logoutButton()+'</div></header><main class="preview-main"><div id="previewError" class="preview-error" role="alert">'+h(error||storageProblem)+'</div>'+({home,records,submit,settings,editor,missing}[view])()+'<p class="local-data-note">'+(demoMode()?'架空の社員の操作デモ · このブラウザに保存':'このブラウザに保存 · API・認証は未接続')+'</p></main>'+nav();
  root.setAttribute("aria-busy",String(saving));
  if(view==="editor"){editorTimeSignatures.set(editDay,timeSignature(readEditor().record));syncEditor();}
  if(embed)root.inert=true;
- if(view==="records"){
-  const list=$("recordList"),today=list.querySelector(".is-today");
-  if(listPositions.has(selectedMonth))list.scrollTop=listPositions.get(selectedMonth).top;
-  else if(today)list.scrollTop=Math.max(0,today.offsetTop-list.offsetTop-today.offsetHeight*2);
- }
- syncWorkStatus();syncLeaveStatus();
+ syncWorkStatus();syncLeaveStatus();syncSaveStatus();
  syncAllocationTotal();
+ if(notificationLanding&&view==='settings'){
+  notificationLanding=false;$('pushSettings')?.scrollIntoView({block:'start'});
+ }
  document.querySelectorAll("[data-state]").forEach(b=>{b.disabled=saving||!demoMode();b.setAttribute("aria-pressed",String(b.dataset.state===(record(now.day).end?'after':record(now.day).start?'working':'before')));});
 }
 function syncHome(preserveRest=false){
@@ -551,10 +603,10 @@ function openDialog(content){
 function dialogError(){return '<p id="dialogError" class="preview-error" role="alert"></p>';}
 function closeDialog(){leaveConfirmation=null;dialog.close();dialog.innerHTML="";error="";}
 function dialogHeader(title,caption=""){return '<div class="dialog-heading"><div><h2 id="dialogTitle">'+h(title)+'</h2>'+(caption?'<p>'+h(caption)+'</p>':'')+'</div><button type="button" data-action="close-dialog" class="dialog-close" aria-label="閉じる">×</button></div>';}
-function openEditor(day){
+function openEditor(day,{repair=false}={}){
  now=clockNow();if(!C.validDay(day)||day<C.firstDay(data)||day>now.day)return;
  const sameView=view==="editor";rememberList();
- if(sameView)captureEditor();else editorReturn=view;
+ if(sameView)captureEditor();else{editorReturn=view;if(!repair)submissionRepair=null;}
  editDay=day;view="editor";error="";render();rememberRoute(sameView);root.scrollIntoView({block:"start"});
 }
 const breakText=n=>C.pad(Math.floor(n/60))+":"+C.pad(n%60);
@@ -566,12 +618,12 @@ function readEditor(){
  const source=editorDrafts.get(editDay)?.record||editorRecord(editDay),next={start:$("editStart").value,end:$("editEnd").value,overnight:$("editOvernight").checked,breakMinutes:parseEditorBreak($("editBreak").value),locationId:$("editPlace").value,note:$("editNote").value,phases:selectedPhases(true),leave:$("editLeave").value,sourceDay:$("editLeave").value==='comp'?$("editSourceDay").value:'',allocation:Object.fromEntries(C.PROJECTS.map(k=>[k,Number($("editAlloc"+k).value)]))};
  return {record:retainLegacyAllocation(next,source),breakText:$("editBreak").value};
 }
-function captureEditor(){if(view==="editor"&&$("dayForm"))editorDrafts.set(editDay,readEditor());}
+function captureEditor(){if(view==="editor"&&$("dayForm")){editorDrafts.set(editDay,readEditor());syncSaveStatus();}}
 function editor(){
  const draft=editorDrafts.get(editDay),r=draft?.record||editorRecord(editDay),rest=draft?.breakText??breakText(r.breakMinutes),backLabel={records:"勤怠一覧へ",home:"ホームへ",submit:"提出画面へ",missing:"未入力一覧へ"}[editorReturn]||"勤怠一覧へ";
  const fullDate=editDay.slice(0,4)+"年"+Number(editDay.slice(5,7))+"月"+Number(editDay.slice(8))+"日（"+C.WEEK[C.weekday(editDay)]+"）";
  const presets=[0,15,30,45,60,75,90,105,120,150,180,240,300,360,480,720,1440];
- return '<section class="subpage day-editor"><div class="editor-title"><button type="button" class="editor-back" data-action="editor-back">← '+backLabel+'</button><span>更新で保存</span></div><h1>勤怠の編集</h1><div class="editor-date-switcher"><button type="button" class="month-arrow" data-action="editor-prev" aria-label="前の日" '+(editDay<=C.firstDay(data)?'disabled':'')+'>←</button><label class="editor-date-picker" for="editDate"><span>'+fullDate+'</span>'+icon('calendar')+'<input id="editDate" type="date" min="'+C.firstDay(data)+'" max="'+now.day+'" value="'+editDay+'" aria-label="編集する日付"></label><button type="button" class="month-arrow" data-action="editor-next" aria-label="次の日" '+(editDay>=now.day?'disabled':'')+'>→</button></div><p class="editor-holiday-name"'+(C.holiday(editDay)?'':' aria-hidden="true"')+'>'+h(C.holiday(editDay))+'</p><form id="dayForm"><section class="paper-form-card"><h2 class="form-card-heading">勤務時間</h2><div class="editor-time-grid"><div class="form-field"><label for="editStart">出勤時刻</label><input class="time-input" id="editStart" type="time" value="'+r.start+'"></div><div class="form-field"><label for="editEnd">退勤時刻</label><input class="time-input" id="editEnd" type="time" value="'+r.end+'"></div></div><label class="nextday"><input id="editOvernight" type="checkbox" '+(r.overnight?'checked':'')+'>翌日に退勤</label><div class="editor-rest-worked"><div class="form-field"><label for="editBreak">休憩時間 <small>hh:mm</small></label><input class="paper-input editor-break-input" id="editBreak" type="text" inputmode="text" value="'+h(rest)+'" list="editorBreaks" placeholder="01:00" maxlength="5" required aria-label="休憩時間、時間と分"><datalist id="editorBreaks">'+presets.map(n=>'<option value="'+breakText(n)+'"></option>').join('')+'</datalist></div><div class="form-field"><div class="calculated-label"><span id="workedLabel">実働時間</span><span class="calculated-badge">自動計算</span></div><output id="editWorked" class="editor-worked" for="editStart editEnd editBreak editOvernight" aria-labelledby="workedLabel">—</output></div></div><div class="editor-absence" role="group" aria-labelledby="editAbsenceLabel"><div><span id="editAbsenceLabel">この日の欠勤時間</span><output id="editAbsence" for="editStart editEnd editBreak editOvernight editLeave" aria-labelledby="editAbsenceLabel">未確定</output></div><p>1日8時間・半休は4時間分として計算</p></div></section><section class="paper-form-card"><h2 class="form-card-heading">勤務内容</h2><div class="editor-fields">'+leaveChoices(r.leave,true)+'<div class="form-field editor-comp-source" '+(r.leave==='comp'?'':'hidden')+'><label for="editSourceDay">元の休日出勤</label><select class="paper-input" id="editSourceDay">'+compSourceOptions(editDay,r.sourceDay||'')+'</select><small class="comp-source-note">休日出勤1日につき代休1日</small></div><div class="leave-save-row"><p id="editorLeaveSaveStatus" class="leave-save-status" role="status"></p><div class="leave-form-actions"><button type="button" class="paper-button" data-action="editor-leave-request">'+icon('send')+'<span>送信</span></button></div></div><div class="form-field"><label for="editPlace">勤務場所</label><select class="paper-input" id="editPlace">'+placeOptions(r.locationId)+'</select></div>'+workTabs('<div class="form-field work-note-field"><label for="editNote">作業内容</label><textarea class="paper-input" id="editNote" maxlength="1000" rows="3">'+h(r.note)+'</textarea></div>',r.phases??[],true)+'</div></section><section class="paper-form-card editor-allocation-card"><div class="editor-allocation-heading"><h2>工数の振り分け</h2><span>時間単位</span></div><p id="allocationState" class="editor-allocation-state" role="status"></p><div class="editor-allocation">'+C.PROJECTS.map(k=>'<label for="editAlloc'+k+'"><span>'+k+'</span><input class="paper-input" id="editAlloc'+k+'" name="'+k+'" type="number" min="0" max="'+C.allocationMax(r,k)+'" step="any" inputmode="decimal" required value="'+r.allocation[k]+'"></label>').join('')+'<button class="paper-button editor-update" type="submit">更新</button></div></section><button type="button" class="editor-clear" data-action="clear-day">この日を未入力に戻す</button></form></section>';
+ return '<section class="subpage day-editor"><div class="editor-title"><button type="button" class="editor-back" data-action="editor-back">← '+backLabel+'</button><span>変更は更新で保存</span></div>'+(typeof repairContext==='function'?repairContext():'')+'<h1>勤怠の編集</h1><div class="editor-date-switcher"><button type="button" class="month-arrow" data-action="editor-prev" aria-label="前の日" '+(editDay<=C.firstDay(data)?'disabled':'')+'>←</button><label class="editor-date-picker" for="editDate"><span>'+fullDate+'</span>'+icon('calendar')+'<input id="editDate" type="date" min="'+C.firstDay(data)+'" max="'+now.day+'" value="'+editDay+'" aria-label="編集する日付"></label><button type="button" class="month-arrow" data-action="editor-next" aria-label="次の日" '+(editDay>=now.day?'disabled':'')+'>→</button></div><p class="editor-holiday-name"'+(C.holiday(editDay)?'':' aria-hidden="true"')+'>'+h(C.holiday(editDay))+'</p><form id="dayForm"><section class="paper-form-card"><h2 class="form-card-heading">勤務時間</h2><div class="editor-time-grid"><div class="form-field"><label for="editStart">出勤時刻</label><input class="time-input" id="editStart" type="time" value="'+r.start+'"></div><div class="form-field"><label for="editEnd">退勤時刻</label><input class="time-input" id="editEnd" type="time" value="'+r.end+'"></div></div><label class="nextday"><input id="editOvernight" type="checkbox" '+(r.overnight?'checked':'')+'>翌日に退勤</label><div class="editor-rest-worked"><div class="form-field"><label for="editBreak">休憩時間 <small>hh:mm</small></label><input class="paper-input editor-break-input" id="editBreak" type="text" inputmode="text" value="'+h(rest)+'" list="editorBreaks" placeholder="01:00" maxlength="5" required aria-label="休憩時間、時間と分"><datalist id="editorBreaks">'+presets.map(n=>'<option value="'+breakText(n)+'"></option>').join('')+'</datalist></div><div class="form-field"><div class="calculated-label"><span id="workedLabel">実働時間</span><span class="calculated-badge">自動計算</span></div><output id="editWorked" class="editor-worked" for="editStart editEnd editBreak editOvernight" aria-labelledby="workedLabel">—</output></div></div><div class="editor-absence" role="group" aria-labelledby="editAbsenceLabel"><div><span id="editAbsenceLabel">この日の欠勤時間</span><output id="editAbsence" for="editStart editEnd editBreak editOvernight editLeave" aria-labelledby="editAbsenceLabel">未確定</output></div><p>1日8時間・半休は4時間分として計算</p></div></section><section class="paper-form-card"><h2 class="form-card-heading">勤務内容</h2><div class="editor-fields">'+leaveChoices(r.leave,true)+'<div class="form-field editor-comp-source" '+(r.leave==='comp'?'':'hidden')+'><label for="editSourceDay">元の休日出勤</label><select class="paper-input" id="editSourceDay">'+compSourceOptions(editDay,r.sourceDay||'')+'</select><small class="comp-source-note">休日出勤1日につき代休1日</small></div><div class="leave-save-row"><p id="editorLeaveSaveStatus" class="leave-save-status" role="status"></p><div class="leave-form-actions"><button type="button" class="paper-button" data-action="editor-leave-request">'+icon('send')+'<span>送信</span></button></div></div><div class="form-field"><label for="editPlace">勤務場所</label><select class="paper-input" id="editPlace">'+placeOptions(r.locationId)+'</select></div>'+workTabs('<div class="form-field work-note-field"><label for="editNote">作業内容</label><textarea class="paper-input" id="editNote" maxlength="1000" rows="3">'+h(r.note)+'</textarea></div>',r.phases??[],true)+'</div></section><section class="paper-form-card editor-allocation-card"><div class="editor-allocation-heading"><h2>工数の振り分け</h2><span>時間単位</span></div><p id="allocationState" class="editor-allocation-state" role="status"></p><div class="editor-allocation">'+C.PROJECTS.map(k=>'<label for="editAlloc'+k+'"><span>'+k+'</span><input class="paper-input" id="editAlloc'+k+'" name="'+k+'" type="number" min="0" max="'+C.allocationMax(r,k)+'" step="any" inputmode="decimal" required value="'+r.allocation[k]+'"></label>').join('')+'</div></section><button type="button" class="editor-clear" data-action="clear-day">この日を未入力に戻す</button>'+saveToolbar('dayForm')+'</form></section>';
 }
 function syncEditor(){
  if(!$("dayForm"))return;
@@ -601,9 +653,36 @@ function syncWorkStatus(){
  node.innerHTML=saving?'<span>保存中です</span>':dirty?'<span>勤務内容が未保存です</span><button type="button" class="text-button" data-action="retry-work">再保存</button>':'<span>勤務内容は自動保存</span>';
 }
 function syncAllocationTotal(){syncPendingControls();if(!$("allocationForm"))return;const inputs=C.PROJECTS.map(k=>$("alloc"+k)),total=inputs.reduce((n,input)=>n+Math.round(Number(input.value)*60),0);$("allocationTotal").textContent=inputs.every(input=>input.value.trim()!==""&&input.validity.valid)?C.short(total):'—';}
-function openSubmission(period){
+function validRepair(value){
+ return value&&typeof value.test==='boolean'&&value.period&&C.validDay(value.period.start)&&C.validDay(value.period.end)&&value.period.start<=value.period.end&&C.validDay(value.month);
+}
+function repairActive(){return view==='editor'&&editorReturn==='submit'&&validRepair(submissionRepair);}
+function repairIssues(){return repairActive()?C.submissionCheck(data,submissionRepair.period,clockNow()).errors:[];}
+function repairContext(){
+ if(!repairActive())return '';
+ const count=new Set(repairIssues().filter(issue=>issue.day).map(issue=>issue.day)).size;
+ return '<aside class="submission-repair-context" aria-label="提出前の修正"><div><strong>提出前の修正</strong><span>あと <b>'+count+'</b>日</span></div><p>'+h(periodLabel(submissionRepair.period))+'</p></aside>';
+}
+function repairSaveLabel(){return repairActive()?(repairIssues().filter(issue=>issue.day).length>1?'保存して次へ':'保存して再確認'):'';}
+function repairToolbarAction(){return repairActive()?'<button type="button" class="paper-button secondary repair-return" data-action="repair-save-return">保存して確認へ</button>':'';}
+function returnToSubmissionRepair(){
+ if(!repairActive())return;
+ captureEditor();history.back();
+}
+function continueSubmissionRepair(day,intent,context){
+ if(!context||submissionRepair!==context||!repairActive()||editDay!==day)return false;
+ const check=C.submissionCheck(data,context.period,clockNow());
+ if(intent==='return'||check.ok){returnToSubmissionRepair();return true;}
+ const current=check.errors.find(issue=>issue.day===day);
+ if(current){render();toast('保存しました。提出前に'+current.messages.join(' '),{warning:true});return true;}
+ const days=[...new Set(check.errors.filter(issue=>issue.day).map(issue=>issue.day))].sort(),next=days.find(value=>value>day)||days[0];
+ if(next)openEditor(next,{repair:true});else returnToSubmissionRepair();
+ return true;
+}
+function openSubmission(period,{remember=true}={}){
  if(!period||period.end<C.firstDay(data))return showError("この期間には利用開始日以降の記録がありません。");
  submitPeriod=period;now=clockNow();const check=C.submissionCheck(data,period,now),validPeriod=period&&C.validDay(period.start)&&C.validDay(period.end),summary=validPeriod?C.summary(data,period,now):{days:0,minutes:0};
+ if(validPeriod){submissionRepair={period:{start:period.start,end:period.end},test:testSubmission,month:selectedMonth};if(remember&&view==='submit')rememberRoute(true);}
  const list=check.ok?'<p class="complete-message">✓ 提出前のチェックがすべて完了しました。</p>':'<section class="submission-errors" aria-labelledby="submissionIssuesTitle"><h3 id="submissionIssuesTitle">提出できない日があります <small>'+check.errors.filter(issue=>issue.day).length+'日</small></h3><p>日付を選んで修正してください。</p><div class="submission-issues">'+check.errors.map(issue=>'<div class="submission-issue'+(issue.day?'':' submission-issue-static')+'">'+(issue.day?'<button type="button" data-action="missing-day" data-day="'+h(issue.day)+'"><span class="submission-issue-heading"><strong>'+h(issue.day.replaceAll('-','/')+'（'+C.WEEK[C.weekday(issue.day)]+'）')+'</strong><span aria-hidden="true">›</span></span><span class="submission-issue-messages">'+issue.messages.map(message=>'<span class="submission-issue-message">'+h(message)+'</span>').join('')+'</span></button>':'<strong>対象期間・記録を確認してください</strong><ul>'+issue.messages.map(message=>'<li>'+h(message)+'</li>').join('')+'</ul>')+'</div>').join('')+'</div></section>';
  openDialog(dialogHeader('勤務表の確認',validPeriod?periodLabel(period):'対象期間を確認してください')+'<p class="submission-total">勤務 '+summary.days+'日 ／ '+C.duration(summary.minutes)+'</p>'+list+'<p class="panel-note">平日の4時間以下の勤務は有休登録を確認します（半休登録済みは対象外）。作業概要・工数・マイナス実働も確認し、エラーがある間は提出できません。</p><div class="paper-notice"><strong>'+(testSubmission?'テスト提出です。':'Excelを出力します。')+'</strong><p>メールは送信されません。'+(testSubmission?'テスト提出の履歴をこの端末に保存します。':'出力の履歴をこの端末に保存します。')+'</p></div>'+dialogError()+'<div class="paper-actions"><button type="button" class="paper-button secondary" data-action="close-dialog">閉じる</button><button type="button" class="paper-button" data-action="confirm-submission" '+(check.ok?'':'disabled aria-describedby="submissionIssuesTitle"')+'>'+(testSubmission?'テスト提出':'Excel出力')+'</button></div>');
 }
@@ -622,7 +701,7 @@ async function exportPeriod(period,mark=false){
   download(bytes,'day_'+period.start+'_'+period.end+'.xlsx');
   if(mark){candidate.submissions[C.periodKey(period)]={at:new Date().toISOString(),test:exportTest};if(!(await commit(candidate,"",{locked:true,expectedRevision}))){showError("Excelのダウンロードは開始しましたが、履歴を保存できませんでした。"+error);return;}}
   rememberList();
-  if(dialog.open)closeDialog();render();toast(mark?'勤務表の出力操作と'+(exportTest?'テスト提出':'出力')+'履歴を記録しました':'勤務表のダウンロードを開始しました');
+  if(dialog.open)closeDialog();if(mark){submissionRepair=null;rememberRoute(true);}render();toast(mark?'勤務表の出力操作と'+(exportTest?'テスト提出':'出力')+'履歴を記録しました':'勤務表のダウンロードを開始しました');
  }catch(issue){const message="勤務表を出力できませんでした。もう一度お試しください。";showError(issue?.code?repositoryMessage(issue,message):message);}
  finally{setSaving(false);}
 }
@@ -638,6 +717,7 @@ function captureSettings(){
  else delete settingsDraft.plannedHoursByMonth[monthKey];
  Object.assign(settingsDraft.projects[projectIndex],{name:$("projectName").value,description:$("projectDescription").value});
  Object.assign(settingsDraft.places[placeIndex],{code:$("placeCode").value,name:$("placeName").value,address:$("placeAddress").value});
+ syncSaveStatus();
 }
 async function sample(mode){
  if(!demoMode()||saving)return;
@@ -649,7 +729,12 @@ async function sample(mode){
  if(await saveRecord(now.day,r,'今日の'+{before:'出勤前',working:'勤務中',after:'退勤後'}[mode]+'サンプルに切り替えました')){restOpen=false;view="home";render();}
  else{sampleClock=previous;now=clockNow();}
 }
-function changeMonth(offset){const month=C.month(selectedMonth,offset).start;if(month<firstMonth()||month>C.month(clockNow().day).start)return;rememberList();selectedMonth=month;error="";render();rememberRoute(true);}
+function changeMonth(offset){const month=C.month(selectedMonth,offset).start;if(month<firstMonth()||month>C.month(clockNow().day).start)return;rememberList();selectedMonth=month;error="";render();rememberRoute(true);restorePosition();}
+document.addEventListener('toggle',event=>{
+ if(!event.target.isConnected)return;
+ if(event.target.id==='homeTimeEditor')homeTimeOpen=event.target.open;
+ if(event.target.id==='recordsChart')recordsChartOpen=event.target.open;
+},true);
 document.addEventListener('keydown',event=>{
  const button=event.target.closest?.('[data-action="work-content-tab"],[data-action="detail"]');if(!button||embed||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
  event.preventDefault();const buttons=[...button.closest('[role="tablist"]').querySelectorAll('[role="tab"]')],index=buttons.indexOf(button),next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;
@@ -666,6 +751,8 @@ document.addEventListener("click",async event=>{
  if(!data)return;
  if(button.dataset.state){await sample(button.dataset.state);return;}
  const action=button.dataset.action;
+ if(action==='undo-change'){await restoreUndo();return;}
+ if(undoChange&&['home-leave','editor-leave','editor-phase','default-phase','default-break','work-phase','plan-auto','allocate-rest','reset-defaults'].includes(action))dismissUndo();
  if(action==='work-content-tab'){switchWorkTab(button);return;}
  if(action==='default-phase'){
   if(saving||!C.PHASE_IDS.includes(button.dataset.phase))return;
@@ -700,10 +787,18 @@ document.addEventListener("click",async event=>{
  if(action==="missing-records"){view="missing";error="";render();rememberRoute();root.scrollIntoView({block:"start"});return;}
  if(action==="missing-back"){history.back();return;}
  if(action==="tab"||action==="home"){
+  submissionRepair=null;
   const previous=view;rememberList();if(view==="settings")captureSettings();if(view==="editor"){captureEditor();if(button.dataset.tab==="records")selectedMonth=C.month(editDay).start;}view=action==="home"?'home':button.dataset.tab;error="";restOpen=false;render();rememberRoute(previous===view);restorePosition();return;
  }
  if(action==="editor-prev"||action==="editor-next"){openEditor(C.add(editDay,action==="editor-prev"?-1:1));return;}
  if(action==="editor-back"){captureEditor();history.back();return;}
+ if(action==='repair-save-return'){
+  if(!saving&&repairActive()){
+   repairReturnRequested=true;
+   try{$('dayForm').requestSubmit($('dayForm button[type="submit"]'));}finally{repairReturnRequested=false;}
+  }
+  return;
+ }
  if(action==="retry-work"){
   await saveWork({note:$("workNote").value,locationId:$("workPlace").value,phases:[...selectedPhases()]},'勤務内容を保存しました');return;
  }
@@ -716,7 +811,8 @@ document.addEventListener("click",async event=>{
  }
  if(action==="reset-punches"){
   if(Date.now()<lockUntil)return;
-  if(await updateToday({start:"",end:"",overnight:false,allocation:Object.fromEntries(C.PROJECTS.map(k=>[k,0]))},'出勤・退勤と工数を取り消しました')){lockPunches();syncHome(true);}return;
+  const snapshot=undoSnapshot(renderedDay);
+  if(await updateToday({start:"",end:"",overnight:false,allocation:Object.fromEntries(C.PROJECTS.map(k=>[k,0]))},'出勤・退勤と工数を取り消しました')){refreshUndoDrafts(snapshot);clearSavedHomeDraft(snapshot.day,{allocation:snapshot.home?.allocation});lockPunches();syncHome(true);offerUndo(snapshot,'出勤・退勤と工数を取り消しました');}return;
  }
  if(action==="reset"){await sample('before');return;}
  if(action==="live"){if(!demoMode())return;sampleClock="";render();return;}
@@ -736,24 +832,37 @@ document.addEventListener("click",async event=>{
   if(other>total)return showError("P2〜SETの合計が勤務時間を超えています。");
   $("allocP1").value=Number(((total-other)/60).toFixed(8));setHomeDraft("allocation",Object.fromEntries(C.PROJECTS.map(k=>[k,$("alloc"+k).value])));syncAllocationTotal();return;
  }
+ if(action==='record-filter'){
+  const filter=button.dataset.filter;if(!['all','missing'].includes(filter))return;
+  rememberList();recordsFilter=filter;render();rememberRoute(true);
+  document.querySelector('.record-controls')?.scrollIntoView({block:'start'});
+  document.querySelector('[data-action="record-filter"][data-filter="'+filter+'"]')?.focus({preventScroll:true});return;
+ }
+ if(action==='records-today'){
+  rememberList();now=clockNow();selectedMonth=C.month(now.day).start;recordsFilter='all';render();rememberRoute(true);
+  const today=$('recordList')?.querySelector('[data-day="'+now.day+'"]');
+  if(today){today.scrollIntoView({block:'start'});today.focus({preventScroll:true});}return;
+ }
  if(action==="month-prev"){changeMonth(-1);return;}
  if(action==="month-next"){changeMonth(1);return;}
- if(action==="chart-month"){const month=button.dataset.month;if(!C.validDay(month)||month<firstMonth()||month>C.month(clockNow().day).start)return;rememberList();selectedMonth=month;render();rememberRoute(true);return;}
+ if(action==="chart-month"){const month=button.dataset.month;if(!C.validDay(month)||month<firstMonth()||month>C.month(clockNow().day).start)return;rememberList();selectedMonth=month;render();rememberRoute(true);restorePosition();return;}
  if(action==="edit-day"){openEditor(button.dataset.day);return;}
- if(action==="close-dialog"){closeDialog();return;}
+ if(action==="close-dialog"){if(dialog.querySelector('[data-action="confirm-submission"]')){submissionRepair=null;rememberRoute(true);}closeDialog();return;}
  if(action==="clear-day"){
   now=clockNow();const day=editDay,pendingEditor=editorDrafts.get(day),pendingHome=homeDrafts.get(day),relation=C.validateRecordChange(data,day,null,now);if(!relation.ok){toast(relation.error,{warning:true});return;}
+  const snapshot=undoSnapshot(day);
   const next=C.clone(data);delete next.records[day];C.invalidateSubmissions(next,day);
-  if(await commit(next,'この日を未入力に戻しました')){if(editorDrafts.get(day)===pendingEditor)editorDrafts.delete(day);if(homeDrafts.get(day)===pendingHome)homeDrafts.delete(day);render();}return;
+  if(await commit(next,'この日を未入力に戻しました')){refreshUndoDrafts(snapshot);if(editorDrafts.get(day)===pendingEditor)editorDrafts.delete(day);if(homeDrafts.get(day)===pendingHome)homeDrafts.delete(day);render();offerUndo(snapshot,dayLabel(day)+'を未入力に戻しました');}return;
  }
  if(action==="export-month"){await exportPeriod(C.month(selectedMonth));return;}
  if(action==="submit-period"){openSubmission(C.periods(selectedMonth)[Number(button.dataset.index)]);return;}
  if(action==="confirm-submission"){await exportPeriod(submitPeriod,true);return;}
- if(action==="missing-day"){const day=button.dataset.day;closeDialog();openEditor(day);return;}
+ if(action==="missing-day"){const day=button.dataset.day;closeDialog();openEditor(day,{repair:true});return;}
  if(action==="settings-tab"){captureSettings();settingsTab=button.dataset.tab;error="";render();return;}
  if(action==="reset-defaults"){
-  const next=C.clone(data);next.defaults=config.initialState(now).defaults;next.settings.workSummary=next.defaults.note;
-  if(await commit(next,'初期値を標準に戻しました')){defaultsDraft=null;if(settingsDraft)settingsDraft.workSummary=data.defaults.note;render();}return;
+  if(saving)return;
+  const standard=C.clone(config.initialState(clockNow()).defaults);
+  defaultsDraft={...standard,breakMinutes:String(standard.breakMinutes)};render();toast('標準の値を入力しました。「更新」で保存します。');return;
  }
  if(action==="totals"){
   const month=C.month(now.day),sum=C.summary(data,month,now);
@@ -762,6 +871,7 @@ document.addEventListener("click",async event=>{
 });
 document.addEventListener("change",async event=>{
  if(embed||!data)return;const input=event.target;
+ if(undoChange&&input.matches?.('input,select,textarea'))dismissUndo();
  if(input.id==="editDate"){
   if(C.validDay(input.value)&&input.value>=C.firstDay(data)&&input.value<=clockNow().day)openEditor(input.value);else{input.value=editDay;toast("今日までの日付を選んでください。",{warning:true});}return;
  }
@@ -769,7 +879,7 @@ document.addEventListener("change",async event=>{
  if(input.id==='leaveSourceDay'){setHomeDraft('sourceDay',input.value);syncLeaveStatus();return;}
  if(input.dataset.time){
   const kind=input.dataset.time,r=record(now.day),rest=readRest();
-  if(!input.value){input.value=r[kind];return showError("時刻を入力してください。取消は「取消」ボタンで行えます。");}
+  if(!input.value){input.value=r[kind];return showError("時刻を入力してください。取消は「打刻取消」ボタンで行えます。");}
   if(rest==null){input.value=r[kind];return;}
   if(await updateToday({[kind]:input.value,breakMinutes:rest,overnight:$("nextday").checked},'時刻を保存しました',{autoAllocate:true})){clearHomeDraft("rest");restOpen=false;lockPunches(250);syncHome();}else input.value=r[kind];return;
  }
@@ -780,20 +890,23 @@ document.addEventListener("change",async event=>{
   const key=input.id==="workPlace"?'locationId':'note';setHomeDraft(key,input.value);await saveWork({[key]:input.value},'勤務内容を保存しました');return;
  }
  if(input.id==="monthInput"){
-  const day=input.value+'-01';if(C.validDay(day)&&day>=firstMonth()&&day<=now.day){rememberList();selectedMonth=day;render();rememberRoute(true);}else{input.value=selectedMonth.slice(0,7);showError("表示できる月を選んでください。");}return;
+  const day=input.value+'-01';if(C.validDay(day)&&day>=firstMonth()&&day<=now.day){rememberList();selectedMonth=day;render();rememberRoute(true);restorePosition();}else{input.value=selectedMonth.slice(0,7);showError("表示できる月を選んでください。");}return;
  }
  if(input.id==="testSubmission"){testSubmission=input.checked;return;}
  if(input.id==='planMode'||input.id==='planHoursInput'){syncPlanningControls(input);return;}
  if(input.id==='plannedHoursMode'||input.id==='plannedHours'){syncPlanningControls(input);captureSettings();return;}
  if(input.closest?.("#defaultsForm")){syncDefaultsDraft();return;}
+ if(input.closest?.("#settingsForm")){captureSettings();return;}
 });
 document.addEventListener("input",event=>{
  if(embed||!data)return;
+ if(undoChange)dismissUndo();
  if(event.target.closest?.("#defaultsForm")){syncDefaultsDraft();return;}
  if(["placeCode","placeName","placeAddress"].includes(event.target.id)){captureSettings();syncPlaceDraft();return;}
  if(event.target.id==="projectName"||event.target.id==="projectDescription"){captureSettings();syncProjectDraft();return;}
  if(event.target.id==='planHoursInput'){syncPlanningControls(event.target);return;}
- if(event.target.id==='plannedHours'){syncPlanningControls(event.target);captureSettings();return;}
+ if(event.target.id==='plannedHours'||event.target.id==='plannedHoursMode'){syncPlanningControls(event.target);captureSettings();return;}
+ if(event.target.closest?.("#settingsForm")){captureSettings();return;}
  if(event.target.id==="workNote"){setHomeDraft("note",event.target.value);syncWorkStatus();return;}
  if(event.target.id==="restHours"||event.target.id==="restMinutes"){setHomeDraft("rest",{hours:$("restHours").value,minutes:$("restMinutes").value});return;}
  if(event.target.closest?.("#dayForm")){if(event.target.id==='editLeave')syncCompSourceFields(true);applyEditorTimeAllocation(event.target);syncEditor();captureEditor();return;}
@@ -828,12 +941,12 @@ document.addEventListener("submit",async event=>{
   if(await updateToday({allocation},'工数を保存しました',{strictAllocation:true})){clearHomeDraft("allocation");syncHome();}return;
  }
  if(id==="dayForm"){
-  now=clockNow();const day=editDay,r=readEditor().record,workDraftAtSave=homeDraft(day);
+  now=clockNow();const day=editDay,r=readEditor().record,workDraftAtSave=homeDraft(day),repair=repairActive()?submissionRepair:null,repairIntent=repairReturnRequested?'return':'next';
   if(r.breakMinutes==null)return showError("休憩時間は 01:00 のように、0:00〜24:00で入力してください。");
-  if(r.leave!==record(day).leave||(r.sourceDay||'')!==(record(day).sourceDay||'')){openLeaveRequest(true);return;}
+  if(r.leave!==record(day).leave||(r.sourceDay||'')!==(record(day).sourceDay||'')){openLeaveRequest(true,repair?repairIntent:null);return;}
   if(await saveRecord(day,r,'勤怠を更新しました',{strictAllocation:true})){
    const resolved=homeDraft(day)===workDraftAtSave?{...r,...Object.fromEntries(['note','locationId','phases'].filter(key=>Object.hasOwn(workDraftAtSave,key)).map(key=>[key,workDraftAtSave[key]]))}:r;
-   clearSavedHomeDraft(day,resolved);render();
+   clearSavedHomeDraft(day,resolved);if(!continueSubmissionRepair(day,repairIntent,repair))render();
   }return;
  }
  if(id==="defaultsForm"){
@@ -853,14 +966,18 @@ document.addEventListener("submit",async event=>{
  }
 });
 dialog.addEventListener("close",()=>{if(!dialog.open){leaveConfirmation=null;error="";}});
+dialog.addEventListener('cancel',()=>{if(dialog.querySelector('[data-action="confirm-submission"]')){submissionRepair=null;rememberRoute(true);}});
 window.addEventListener("popstate",event=>{
  if(!data)return;
  const route=event.state;if(!route?.paper)return;
  rememberList();captureEditor();if(view==="settings")captureSettings();if(dialog.open)closeDialog();
  view=["home","records","submit","settings","editor","missing"].includes(route.view)?route.view:"home";
+ submissionRepair=validRepair(route.repair)?C.clone(route.repair):null;
+ recordsFilter=route.recordFilter==='missing'?'missing':'all';
  const routeMonth=route.month||C.month(clockNow().day).start;selectedMonth=C.validDay(routeMonth)&&routeMonth>=firstMonth()&&routeMonth<=C.month(clockNow().day).start?routeMonth:C.month(clockNow().day).start;editDay=route.day||"";editorReturn=route.origin||"records";
  if(view==="editor"&&(!C.validDay(editDay)||editDay<C.firstDay(data)||editDay>clockNow().day))view="records";
  restOpen=false;error="";render();restorePosition();
+ if(view==='submit'&&submissionRepair){testSubmission=submissionRepair.test;selectedMonth=submissionRepair.month;render();openSubmission(submissionRepair.period,{remember:false});}
 });
 function tick(){
  if(!data)return;

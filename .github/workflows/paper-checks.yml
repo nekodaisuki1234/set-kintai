@@ -79,6 +79,10 @@ jobs:
           node tests/paper-absence-ui-check.cjs
           node tests/paper-rest-ui-check.cjs
           node tests/paper-settings-ui-check.cjs
+          node tests/paper-navigation-ux-check.cjs
+          node tests/paper-save-ux-check.cjs
+          node tests/paper-repair-ux-check.cjs
+          node tests/paper-undo-ux-check.cjs
       - name: Keep screenshots
         if: always()
         uses: actions/upload-artifact@v4

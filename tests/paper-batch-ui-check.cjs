@@ -26,7 +26,7 @@ async function run(){
  };
  const state=page=>page.evaluate(()=>JSON.parse(localStorage.getItem(window.PaperAttendance.KEY)));
  const record=async(page,day="2026-10-27")=>(await state(page)).records[day];
- const change=async(page,id,value)=>{await page.locator("#"+id).fill(value);await page.locator("#"+id).dispatchEvent("change");};
+ const change=async(page,id,value)=>{if(['startTime','endTime'].includes(id))await page.locator('#homeTimeEditor').evaluate(n=>n.open=true);await page.locator("#"+id).fill(value);await page.locator("#"+id).dispatchEvent("change");};
  const edit=async(page,day)=>{await page.locator("#nav-records").click();await page.locator(".paper-record[data-day='"+day+"']").click();assert.equal(await page.locator("#editDate").inputValue(),day);};
  const jump=async(page,day)=>{await change(page,"editDate",day);assert.equal(await page.locator("#editDate").inputValue(),day);};
  const save=async page=>{await page.locator("#dayForm button[type=submit]").click();if(await page.locator("[data-action=confirm-leave-request]").count())await page.locator("[data-action=confirm-leave-request]").click();};
@@ -88,10 +88,15 @@ async function run(){
 
   // Persisted or forged duplicate links must also fail the guarded submission path.
   const guard=await fresh("2026-10-27T12:00:00Z");await guard.evaluate(()=>{const C=window.PaperAttendance,s=JSON.parse(localStorage.getItem(C.KEY));for(const day of ["2026-10-26","2026-10-27"])s.records[day]={...C.empty(s),leave:"comp",sourceDay:"2026-10-24"};s.revision++;localStorage.setItem(C.KEY,JSON.stringify(s));});await guard.reload();
-  const openSubmission=async()=>{await guard.locator("#nav-submit").click();await guard.locator("[data-action=submit-period][data-index='2']").click();};await openSubmission();
+  const openSubmission=async()=>{
+   if(await guard.locator("#paperDialog[open] [data-action=confirm-submission]").count()){
+    assert.match(await guard.locator("#paperDialog .dialog-heading").innerText(),/2026\/10\/01 〜 2026\/10\/31/);return;
+   }
+   await guard.locator("#nav-submit").click();await guard.locator("[data-action=submit-period][data-index='2']").click();
+  };await openSubmission();
   assert.equal(await guard.locator("[data-action=confirm-submission]").isDisabled(),true);const issues=await guard.locator(".submission-issues").innerText();assert.match(issues,/2026\/10\/26/);assert.match(issues,/2026\/10\/27/);assert.match(issues,/代休|使用|紐付/);assert.equal(await guard.locator(".submission-issue [data-day='2026-10-25']").count(),0,"a valid two-hour Sunday must not require paid leave");
   let downloads=0;guard.on("download",()=>downloads++);await guard.locator("[data-action=confirm-submission]").evaluate(node=>node.disabled=false);await guard.locator("[data-action=confirm-submission]").click();assert.equal(downloads,0);assert.equal(Object.keys((await state(guard)).submissions).length,0);assert.equal(await guard.locator("[data-action=confirm-submission]").isDisabled(),true);
-  await guard.locator("[data-action=missing-day][data-day='2026-10-27']").click();await guard.locator("#editSourceDay").selectOption("2026-10-25");await save(guard);await openSubmission();assert.equal(await guard.locator(".submission-issue").count(),0);assert.equal(await guard.locator("[data-action=confirm-submission]").isEnabled(),true);
+  await guard.locator("[data-action=missing-day][data-day='2026-10-27']").click();await guard.locator("#editSourceDay").selectOption("2026-10-25");await save(guard);await guard.waitForFunction(()=>document.querySelector("#paperDialog[open] [data-action=confirm-submission]"));await openSubmission();assert.equal(await guard.locator(".submission-issue").count(),0);assert.equal(await guard.locator("[data-action=confirm-submission]").isEnabled(),true);
   assert.deepEqual(errors,[]);console.log("PASS duplicate-link submission guard and valid short holiday work after all links are corrected");
  }finally{await browser.close();}
 }

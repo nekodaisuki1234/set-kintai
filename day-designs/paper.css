@@ -564,3 +564,71 @@ html[data-theme=paper]{scroll-padding-bottom:calc(100px + env(safe-area-inset-bo
 [data-theme=paper] .place-settings-card textarea{min-height:88px}
 @media(max-width:360px){[data-theme=paper] .place-tabs{gap:5px}[data-theme=paper] .defaults-summary{padding:12px}[data-theme=paper] .settings-tabs button{padding-inline:5px;font-size:11px}}
 @media(max-width:319px){[data-theme=paper] .default-break-presets{grid-template-columns:repeat(3,minmax(44px,1fr))}}
+
+/* Compact home controls and one continuous attendance list. */
+[data-theme=paper] :is(.home-time-disclosure,.records-chart-disclosure)>summary{display:flex;align-items:center;gap:8px;min-height:44px;list-style:none;cursor:pointer;color:var(--primary);font-size:12px;line-height:1.6}
+[data-theme=paper] :is(.home-time-disclosure,.records-chart-disclosure)>summary::-webkit-details-marker{display:none}
+[data-theme=paper] :is(.home-time-disclosure,.records-chart-disclosure)>summary:focus-visible{outline:2px solid var(--secondary);outline-offset:3px;border-radius:4px}
+[data-theme=paper] .disclosure-chevron{margin-left:auto;font-size:18px;line-height:1;transition:transform .15s}
+[data-theme=paper] details[open]>summary>.disclosure-chevron{transform:rotate(180deg)}
+[data-theme=paper] .home-time-disclosure .time-area{padding-top:9px}
+[data-theme=paper] .home-time-card .rest-row{margin-top:6px;padding-top:8px}
+[data-theme=paper] .records-page .month-holidays{margin-bottom:8px}
+[data-theme=paper] .records-chart-disclosure{margin:0 0 10px;border-block:1px solid var(--line)}
+[data-theme=paper] .records-chart-disclosure>summary{font-size:11px;min-height:44px}
+[data-theme=paper] .records-chart-disclosure .annual-section{margin-top:8px}
+[data-theme=paper] .record-controls{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;background:var(--paper);border-bottom:1px solid var(--line)}
+[data-theme=paper] .record-filters{display:flex;gap:4px;min-width:0}
+[data-theme=paper] .record-controls button{min-height:44px;padding:8px 12px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted);font-size:12px;white-space:nowrap}
+[data-theme=paper] .record-controls button[aria-pressed=true]{border-color:#d8e3dc;background:#e6eeea;color:#36594e;font-weight:600}
+[data-theme=paper] .record-controls .record-today{border-color:var(--line);color:var(--primary)}
+[data-theme=paper] .record-controls button:focus-visible{outline:2px solid var(--secondary);outline-offset:2px}
+[data-theme=paper] .record-filters span{margin-left:4px;font-variant-numeric:tabular-nums}
+[data-theme=paper] .record-list{max-height:none;overflow:visible;overscroll-behavior-y:auto}
+[data-theme=paper] .paper-record{scroll-margin-top:68px}
+[data-theme=paper] .records-empty{padding:28px 12px;color:var(--muted);font-size:12px;line-height:1.9;text-align:center}
+@media(prefers-reduced-motion:reduce){[data-theme=paper] .disclosure-chevron{transition:none}}
+
+/* Recover a cancelled record without moving the page. */
+[data-theme=paper] .study-toast.has-undo{display:flex;align-items:center;justify-content:space-between;gap:12px;width:min(390px,calc(100% - 32px));}
+[data-theme=paper] .study-toast.visible.has-undo{pointer-events:auto;}
+[data-theme=paper] .study-toast button{flex:none;min-height:44px;padding:8px 10px;border:1px solid #ffffff70;border-radius:6px;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer;}
+[data-theme=paper] .study-toast button:focus-visible{outline:2px solid currentColor;outline-offset:3px;}
+
+/* Reachable save controls: a stable strip above the mobile navigation. */
+html[data-theme=paper]:has(.form-save-bar){--paper-savebar-height:76px;scroll-padding-bottom:calc(162px + env(safe-area-inset-bottom))}
+html[data-theme=paper]:has(.form-save-bar.has-repair-actions){--paper-savebar-height:110px;scroll-padding-bottom:calc(196px + env(safe-area-inset-bottom))}
+[data-theme=paper] .has-save-toolbar .preview-main{padding-bottom:calc(var(--paper-savebar-height) + 28px)}
+[data-theme=paper] .form-save-bar{position:fixed;z-index:12;left:50%;bottom:116px;transform:translateX(-50%);width:min(430px,calc(100% - 40px));min-height:var(--paper-savebar-height);display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 20px;border:1px solid var(--line);border-radius:10px;background:var(--paper);box-shadow:0 -4px 18px #26394e08}
+[data-theme=paper] .form-save-summary{display:grid;gap:4px;min-width:0;font-size:11px;line-height:1.5;color:var(--muted)}
+[data-theme=paper] .form-save-context{font-weight:550;color:var(--ink);overflow-wrap:anywhere}
+[data-theme=paper] #formSaveStatus{min-height:17px}
+[data-theme=paper] .form-save-bar[data-save-state=dirty] #formSaveStatus{color:var(--secondary)}
+[data-theme=paper] .save-toolbar-actions{display:flex;align-items:stretch;gap:8px}
+[data-theme=paper] .save-toolbar-actions .paper-button{margin:0;min-width:88px;min-height:44px;padding:10px 16px;font-size:13px;line-height:1.5}
+[data-theme=paper] .form-save-bar.has-repair-actions{grid-template-columns:1fr;gap:8px}
+[data-theme=paper] .has-repair-actions .form-save-summary{display:flex;justify-content:space-between;gap:8px}
+[data-theme=paper] .has-repair-actions .save-toolbar-actions>*{flex:1;min-width:0;padding-inline:10px}
+[data-theme=paper] .settings-utilities{margin-top:36px;padding-top:24px;border-top:1px solid var(--line)}
+[data-theme=paper] .settings-utilities .login-preview-link{margin-top:0}
+[data-theme=paper] .settings-save-row{justify-content:flex-start}
+[data-theme=paper] .settings-save-row>[data-action=reset-defaults]{flex:0 1 auto}
+[data-theme=paper] .has-save-toolbar :is(input,select,textarea,button){scroll-margin-block:24px calc(160px + env(safe-area-inset-bottom))}
+@media(max-width:520px){
+ [data-theme=paper] .form-save-bar{bottom:calc(70px + env(safe-area-inset-bottom));width:100%;border-inline:0;border-radius:0;padding-inline:var(--gutter)}
+}
+html[data-embed][data-theme=paper] .form-save-bar{position:static;transform:none;width:100%;margin-top:20px}
+@media(min-width:521px){
+ html[data-theme=paper]:has(.form-save-bar){scroll-padding-bottom:calc(140px + var(--paper-savebar-height))}
+ [data-theme=paper] .has-save-toolbar :is(input,select,textarea,button){scroll-margin-bottom:calc(140px + var(--paper-savebar-height))}
+ html[data-theme=paper]:has(.form-save-bar) .study-toast{bottom:calc(130px + var(--paper-savebar-height))}
+}
+
+[data-theme=paper] .study-toast{bottom:calc(85px + env(safe-area-inset-bottom) + var(--paper-savebar-height,0px));}
+
+/* Keep the selected submission period visible while repairing its records. */
+[data-theme=paper] .submission-repair-context{margin:8px 0 20px;padding:12px 14px;border:1px solid var(--line);border-left:3px solid var(--secondary);border-radius:var(--radius);background:var(--surface)}
+[data-theme=paper] .submission-repair-context>div{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px}
+[data-theme=paper] .submission-repair-context>div>span{color:var(--secondary);white-space:nowrap}
+[data-theme=paper] .submission-repair-context b{font-size:17px;font-weight:550}
+[data-theme=paper] .submission-repair-context p{margin:6px 0 0;color:var(--muted);font-size:11px;line-height:1.6}

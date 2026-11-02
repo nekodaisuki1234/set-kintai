@@ -30,7 +30,7 @@ async function run(){
    state.settings.plannedHoursByMonth={"2026-09":152,"2026-11":144};
    state.submissions={"2026-10-01|2026-10-15":{at:"2026-10-16T09:00:00+09:00",test:true}};
    localStorage.setItem(config.storageKey,JSON.stringify(state));
-  },{missing});await page.reload();await ready(page);
+  },{missing});await page.reload();await ready(page);await page.locator("#homeTimeEditor").evaluate(n=>n.open=true);
  };
  const fresh=async(entry,time=OCTOBER)=>{
   const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,locale:"ja-JP"}),page=await context.newPage();
@@ -210,6 +210,7 @@ async function run(){
    for(const width of WIDTHS){
     await layout.setViewportSize({width,height:844});await fixture(layout);await layout.locator("[data-detail=work]").click();const screen=label+" "+width+"px";
     await paperAppearance(layout);await clockGeometry(layout,screen,true);await controls(layout,homeControls,screen+" home");
+    await layout.locator('#homeTimeEditor').evaluate(n=>n.open=true);
     await aboveLabels(layout,"#startTime,#endTime,#workPlace,#workNote",screen+" home");
     await pairedTimes(layout,"#startTime","#endTime",screen+" home");
     await groupedFields(layout,[["#startTime","#endTime","#restEditor"],["#workPlace","#workNote"]],screen+" home");

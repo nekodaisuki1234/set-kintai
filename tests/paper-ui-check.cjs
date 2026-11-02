@@ -16,7 +16,7 @@ async function run(){
   await page.clock.install({time:new Date("2026-10-27T12:00:00Z")});
   await page.goto("http://127.0.0.1:"+server.address().port+"/day-designs/a-paper.html?screen=1");
   const state=()=>page.evaluate(()=>JSON.parse(localStorage.getItem("day-paper-attendance-v1")));
-  const fill=async(id,value)=>{if(id==="workNote"||id==="workPlace")await page.locator("[data-detail=work]").click();await page.locator("#"+id).fill(value);await page.locator("#"+id).dispatchEvent("change");await page.clock.runFor(300);};
+  const fill=async(id,value)=>{if(id==="workNote"||id==="workPlace")await page.locator("[data-detail=work]").click();if((id==='startTime'||id==='endTime')&&!await page.locator('#homeTimeEditor').evaluate(n=>n.open))await page.locator('#homeTimeEditor summary').click();await page.locator("#"+id).fill(value);await page.locator("#"+id).dispatchEvent("change");await page.clock.runFor(300);};
   const heading=title=>page.waitForFunction(t=>document.querySelector("main h1")?.textContent===t,title);
   await fill("startTime","09:00");await fill("endTime","18:00");
   await page.locator("[data-detail=allocation]").click();await page.locator("#allocP1").fill("8");await page.locator("#allocationForm button[type=submit]").click();
@@ -36,9 +36,9 @@ async function run(){
   await page.evaluate(()=>Storage.prototype.setItem=window.originalSetItem);await page.locator("[data-action=retry-work]").click();assert.equal((await state()).records["2026-10-27"].note,"保存失敗でも残す文章 <test>");assert.equal(await page.locator("#previewError").innerText(),"");
   console.log("PASS failed-save text retention, safe escaping and explicit retry");
   await page.locator("#nav-records").click();
-  await page.locator("#recordList").evaluate(n=>n.scrollTop=110);const before=await page.locator("#recordList").evaluate(n=>n.scrollTop);
+  await page.locator("[data-day='2026-10-03']").scrollIntoViewIfNeeded();const before=await page.evaluate(()=>scrollY);
   await page.locator("[data-day='2026-10-03']").click();await page.locator("#editNote").fill("未保存の編集");
-  await page.goBack();await heading("10月の勤怠");assert.equal(await page.locator("#recordList").evaluate(n=>n.scrollTop),before);
+  await page.goBack();await heading("10月の勤怠");await page.waitForFunction(y=>Math.abs(scrollY-y)<=1,before);
   await page.goForward();await heading("勤怠の編集");assert.equal(await page.locator("#editNote").inputValue(),"未保存の編集");
   await page.locator("[data-action=editor-prev]").click();await page.locator("[data-action=editor-next]").click();assert.equal(await page.locator("#editNote").inputValue(),"未保存の編集");
   await page.locator("[data-action=editor-back]").click();await heading("10月の勤怠");

@@ -14,13 +14,13 @@ async function run(){
  await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
  const browser=await chromium.launch({headless:true,executablePath:process.env.PAPER_CHROMIUM_PATH||(fs.existsSync("/usr/bin/chromium")?"/usr/bin/chromium":undefined),args:["--no-sandbox"]}),errors=[];
  const origin="http://127.0.0.1:"+server.address().port;
- const ready=page=>page.locator("#startPunch").waitFor();
+ const ready=async page=>{await page.locator('#startPunch').waitFor();await page.locator('#homeTimeEditor').evaluate(n=>n.open=true);};
  const raw=page=>page.evaluate(()=>localStorage.getItem(window.PaperConfig.storageKey));
  const stored=async page=>JSON.parse(await raw(page));
  const record=async(page,day=DAY)=>(await stored(page)).records[day];
  const text=async(page,selector)=>(await page.locator(selector).textContent()).replace(/\s+/g,"");
  const absence=async(page,selector,value)=>assert.equal(await text(page,selector),value);
- const change=async(page,id,value)=>{await page.locator("#"+id).fill(value);await page.locator("#"+id).dispatchEvent("change");await page.clock.runFor(30);};
+ const change=async(page,id,value)=>{if(['startTime','endTime'].includes(id))await page.locator('#homeTimeEditor').evaluate(n=>n.open=true);await page.locator("#"+id).fill(value);await page.locator("#"+id).dispatchEvent("change");await page.clock.runFor(30);};
  const save=async page=>{await page.locator("#dayForm button[type=submit]").click();if(await page.locator("[data-action=confirm-leave-request]").count())await page.locator("[data-action=confirm-leave-request]").click();await page.clock.runFor(30);};
  const home=async page=>{await page.locator("#nav-home").click();await page.locator("[data-detail=summary]").click();};
  const edit=async(page,day=DAY)=>{await page.locator("#nav-records").click();await page.locator(".paper-record[data-day='"+day+"']").click();assert.equal(await page.locator("#editDate").inputValue(),day);};

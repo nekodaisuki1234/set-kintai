@@ -1,9 +1,9 @@
 # ローカルGitからAWSへ直接配置
 
-ソースと履歴はローカルGitで管理し、開発PCまたは配置用のローカルサーバーからAWS CLI／SAM CLIで直接配置します。GitHubとの認証連携、GitHub ActionsからのAWS配置、GitHub Secretsは使いません。AWSへの接続は、管理者が用意したIAM Identity CenterのSSOプロファイルと一時資格情報を使います。
+ソースと履歴はローカルGitで管理し、GitHubにも同期します。現在の公開画面はGitHub Pagesへの反映まで確認します。AWSへの配置は開発PCまたは配置用のローカルサーバーからAWS CLI／SAM CLIで直接行います。GitHubとの認証連携、GitHub ActionsからのAWS配置、GitHub Secretsは使いません。AWSへの接続は、管理者が用意したIAM Identity CenterのSSOプロファイルと一時資格情報を使います。
 
 ```text
-開発PC → ローカルGitにコミット → 必要なら社内Gitサーバーへpush
+開発PC → ローカルGitにコミット → GitHubへ同期・GitHub Pagesを確認
 配置するPC／サーバー → AWSへログイン → 検査・ビルド → AWSに配置
 ```
 
@@ -15,7 +15,7 @@ Gitで履歴を保存し、AWSへの反映はデプロイコマンドで行い�
 
 | 内容 | 場所 |
 | --- | --- |
-| コード、AWS構成、設定例 | ローカルGit |
+| コード、AWS構成、設定例 | ローカルGitとGitHub（秘密情報は含めない） |
 | AWS CLIのSSO設定・セッション | AWS CLIが管理するユーザー領域。リポジトリ外 |
 | アカウントID・ロールARN・バケット名・Entra ID | `deploy.local.json`。Git対象外。秘密鍵は入れない |
 | ログイン用パスワード | Microsoft 365。勤怠アプリは保存しない |
@@ -110,7 +110,7 @@ python3 scripts/aws-deploy.py --profile set-kintai-dev --config deploy.local.jso
 
 ## バックアップと旧公開先の終了
 
-Git履歴込みのバックアップは`git bundle create /安全な保存先/set-kintai.bundle --all`で作れます。別の端末では`git clone /保存先/set-kintai.bundle set-kintai`で復元できます。Git対象外の個人設定・AWS CLIのログイン状態は含みません。不要なGitHubリモートを登録せず、社内Gitサーバーを使う場合だけそのリモートを設定します。
+Git履歴込みのバックアップは`git bundle create /安全な保存先/set-kintai.bundle --all`で作れます。別の端末では`git clone /保存先/set-kintai.bundle set-kintai`で復元できます。Git対象外の個人設定・AWS CLIのログイン状態は含みません。`origin`にはGitHubの `nekodaisuki1234/set-kintai` を登録し、変更を同期します。このGitリモートはAWSの認証・配置権限を持ちません。
 
 画面をS3＋CloudFrontへ移し、ログインの戻り先URL・APIの許可origin・iPhoneのホーム画面追加を確認してから、旧GitHub Pagesと残るGitHub側の検証・年次祝日更新を終了します。祝日更新は同梱スクリプトをローカルでも実行でき、AWS側での定期実行は別途設定します。
 

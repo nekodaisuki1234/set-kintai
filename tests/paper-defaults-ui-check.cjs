@@ -65,7 +65,9 @@ async function run(){
    await page.evaluate(()=>window.__defaultsAdapter.hold=true);await page.locator('#defaultsForm button[type=submit]').click();await page.waitForFunction(()=>document.querySelector('#previewApp').getAttribute('aria-busy')==='true');
    for(const button of await page.locator('#defaultsPhaseChoices button').all())assert.equal(await button.isDisabled(),true,'pending settings saves freeze phase choices');
    await page.evaluate(()=>{window.__defaultsAdapter.hold=false;window.__defaultsAdapter.release()});await settle(page);assert.deepEqual((await stored(page)).defaults.phases,['design','test','operations']);assert.deepEqual((await stored(page)).records,recordsBeforePending);
-   await page.locator('[data-action=reset-defaults]').click();await settle(page);assert.deepEqual((await stored(page)).defaults.phases,[]);assert.deepEqual((await stored(page)).records,recordsBeforePending);
+   const beforeReset=await raw(page);await page.locator('[data-action=reset-defaults]').click();await settle(page);
+   assert.equal(await raw(page),beforeReset,'resetting defaults must only stage a draft');assert.deepEqual(await chosen(page),[]);assert.match(await page.locator('#formSaveStatus').innerText(),/未保存/);
+   await save(page);assert.deepEqual((await stored(page)).defaults.phases,[]);assert.deepEqual((await stored(page)).records,recordsBeforePending);
    console.log('PASS '+entry+' personal summary/phase defaults, staged drafts, failed/pending saves, new-day inheritance, unchanged existing records, reset and icon-only custom breaks');
    await context.close();
   }
