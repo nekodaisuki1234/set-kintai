@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: One-time GitHub OIDC roles and private deployment artifacts for SET Kintai development
+
+Parameters:
+  GitHubSubject:
+    Type: String
+    Description: Exact main-branch subject reported by the Repository security workflow (not a token)
+    AllowedValues:
+      - repo:nekodaisuki1234/set-kintai:ref:refs/heads/main
+      - repo:nekodaisuki1234@79440835/set-kintai@1414011126:ref:refs/heads/main
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$'
+    Description: Existing account-wide GitHub OIDC provider; leave blank only when none exists
+
+Conditions:
+  CreateOidcProvider: !Equals [!Ref ExistingOidcProviderArn, '']
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidcProvider
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  DeploymentArtifacts:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'set-kintai-development-artifacts-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - {Key: Application, Value: set-kintai}
+        - {Key: Stage, Value: development}
+
+  DeploymentArtifactsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DeploymentArtifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt DeploymentArtifacts.Arn, !Sub '${DeploymentArtifacts.Arn}/*']
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  RuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: set-kintai-development-runtime
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AttendanceRuntime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: OwnApplicationRecords
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:BatchGetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:ConditionCheckItem]
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/set-kintai-development-records'
+              - Sid: ApprovedTemplates
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::set-kintai-development-files-${AWS::AccountId}-${AWS::Region}/templates/*'
+              - Sid: EmployeeExports
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub 'arn:aws:s3:::set-kintai-development-files-${AWS::AccountId}-${AWS::Region}/outputs/*'
+              - Sid: ApplicationLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/set-kintai-development/attendance:*'
+
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: set-kintai-development-cloudformation
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudformation.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DevelopmentApplicationOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: RecordsTable
+                Effect: Allow
+                Action: [dynamodb:CreateTable, dynamodb:DeleteTable, dynamodb:DescribeTable, dynamodb:UpdateTable, dynamodb:DescribeContinuousBackups, dynamodb:UpdateContinuousBackups, dynamodb:DescribeTimeToLive, dynamodb:UpdateTimeToLive, dynamodb:TagResource, dynamodb:UntagResource, dynamodb:ListTagsOfResource]
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/set-kintai-development-records'
+              - Sid: PrivateFileBucketConfiguration
+                Effect: Allow
+                Action: [s3:CreateBucket, s3:DeleteBucket, s3:Get*, s3:ListBucket, s3:PutBucketPolicy, s3:DeleteBucketPolicy, s3:PutEncryptionConfiguration, s3:PutBucketOwnershipControls, s3:PutBucketPublicAccessBlock, s3:PutBucketVersioning, s3:PutBucketTagging]
+                Resource: !Sub 'arn:aws:s3:::set-kintai-development-files-${AWS::AccountId}-${AWS::Region}'
+              - Sid: FunctionCodeArtifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource: !Sub '${DeploymentArtifacts.Arn}/application/*'
+              - Sid: AttendanceFunction
+                Effect: Allow
+                Action: [lambda:CreateFunction, lambda:UpdateFunctionCode, lambda:UpdateFunctionConfiguration, lambda:DeleteFunction, lambda:GetFunction, lambda:GetFunctionConfiguration, lambda:GetPolicy, lambda:AddPermission, lambda:RemovePermission, lambda:ListTags, lambda:TagResource, lambda:UntagResource]
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:set-kintai-development-api'
+              - Sid: PassOnlyRuntimeRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt RuntimeRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+              - Sid: ReadRuntimeRole
+                Effect: Allow
+                Action: iam:GetRole
+                Resource: !GetAtt RuntimeRole.Arn
+              - Sid: HttpApiProvisioning
+                Effect: Allow
+                Action: [apigateway:GET, apigateway:POST, apigateway:PUT, apigateway:PATCH, apigateway:DELETE]
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+              - Sid: ApplicationLogGroup
+                Effect: Allow
+                Action: [logs:CreateLogGroup, logs:DeleteLogGroup, logs:PutRetentionPolicy, logs:DeleteRetentionPolicy, logs:TagResource, logs:UntagResource, logs:ListTagsForResource, logs:TagLogGroup, logs:UntagLogGroup, logs:ListTagsLogGroup]
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/set-kintai-development/attendance:*'
+              - Sid: DescribeLogGroups
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: '*'
+
+  GitHubDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: set-kintai-development-github
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [CreateOidcProvider, !Ref GitHubOidcProvider, !Ref ExistingOidcProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Ref GitHubSubject
+      Policies:
+        - PolicyName: DeployDevelopmentStack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ApplicationStackOnly
+                Effect: Allow
+                Action: [cloudformation:CreateChangeSet, cloudformation:DescribeChangeSet, cloudformation:ExecuteChangeSet, cloudformation:DeleteChangeSet, cloudformation:DescribeStacks, cloudformation:DescribeStackEvents, cloudformation:GetTemplate, cloudformation:ListStackResources]
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/set-kintai-development/*'
+              - Sid: ValidateTemplate
+                Effect: Allow
+                Action: [cloudformation:ValidateTemplate, cloudformation:GetTemplateSummary]
+                Resource: '*'
+              - Sid: PassOnlyCloudFormationRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+              - Sid: ArtifactBucketMetadata
+                Effect: Allow
+                Action: [s3:GetBucketLocation, s3:ListBucket]
+                Resource: !GetAtt DeploymentArtifacts.Arn
+              - Sid: ApplicationArtifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub '${DeploymentArtifacts.Arn}/application/*'
+
+Outputs:
+  AWSAccountId:
+    Value: !Ref AWS::AccountId
+  AWSDeployRoleArn:
+    Value: !GetAtt GitHubDeploymentRole.Arn
+  AWSCloudFormationRoleArn:
+    Value: !GetAtt CloudFormationRole.Arn
+  AWSLambdaRoleArn:
+    Value: !GetAtt RuntimeRole.Arn
+  AWSArtifactBucket:
+    Value: !Ref DeploymentArtifacts

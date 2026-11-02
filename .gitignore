@@ -1,0 +1,35 @@
+# Dependencies and build output
+node_modules/
+.aws-sam/
+coverage/
+__pycache__/
+*.pyc
+*.log
+
+# Local settings, credentials and private data (examples contain placeholders only)
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.toml
+samconfig.toml
+samconfig.yaml
+.aws/
+.secrets/
+secrets/
+private/
+attachments/
+exports/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials
+credentials.json
+profile.json
+profile.*.json
+*.xls
+*.xlsx
+*.xlsm
+*.csv

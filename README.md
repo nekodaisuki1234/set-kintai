@@ -26,3 +26,5 @@ npm test --prefix backend
 ```
 
 AWS配置・認証の設定手順は[バックエンドの説明](backend/README.md)を参照してください。会社テンプレートや社員の実績ファイルは公開リポジトリには含めません。
+
+秘密情報の管理・GitHub OIDCでの配置は[開発環境の接続手順](backend/docs/aws-deployment.md)を参照してください。固定のAWSアクセスキーは使わず、設定が揃うまでAWS配置を止めます。

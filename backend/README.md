@@ -173,23 +173,17 @@ npm test --prefix backend
 
 ## AWSを用意する順番
 
-1. 開発用AWSアカウント、利用するIAMロール、リージョンを決めます。想定は東京`ap-northeast-1`です。DynamoDBテーブルやS3バケットを手作業で先に作る必要はありません。
-2. Microsoft Entra側でAPIの登録・委任scope・アクセス対象を準備し、v2.0のアクセストークンを発行する設定にします。tenant ID、**API用**アクセストークンのaudience、scope名を確認します。既存の別アプリの設定を自動流用しません。
-3. 実際の`.xlsx`またはSET帳票の`.xlsm`テンプレートを使って設定を作り、出力結果をExcelで確認します。テンプレート・設定は承認した版をS3に配置します。
-4. [SAMテンプレート](infra/template.yaml)を検証・ビルドして開発環境にデプロイします。このリポジトリの追加作業では、デプロイは実行していません。
-5. 実社員プロフィールを管理者権限で登録し、ログイン・API接続・履歴の集計を開発環境で確認します。準備が整ってからA画面の保存先を切り替えます。
+[開発環境の接続・デプロイ手順](docs/aws-deployment.md)に、秘密情報の保管場所、誤コミット防止、CloudShellでのOIDC初回設定、GitHub Actions Variablesをまとめています。AWSアクセスキーをGitHubへ登録せず、mainから短時間の資格情報で配置します。
 
-SAM CLIとDockerまたは対応するローカルNodeビルド環境を用意した後のコマンド例です。
+1. 東京の開発用AWSアカウントで、初回設定の`github-oidc.yaml`を適用します。OIDC・配置用S3・3つのIAMロールを準備し、DynamoDBやAPIはまだ作りません。
+2. Microsoft Entraで勤怠APIの登録・委任scope・アクセス対象を準備し、v2.0のアクセストークン用のtenant ID・API audience・scopeを設定します。
+3. GitHub Actionsの`AWS development deploy`をmainから実行します。AWS設定やEntra設定が不足していれば、AWS資格情報を取得する前に止めます。
+4. 実際の会社テンプレートとセル設定を非公開S3へ置き、対応するキーを設定して再配置します。未設定ではExcel出力を無効化します。
+5. 実社員プロフィールを事前登録し、Microsoft 365ログイン・画面のAPI接続・実機と実Excelの検証を進めます。
 
-```sh
-sam validate --lint --region ap-northeast-1 --template-file backend/infra/template.yaml
-sam build --template-file backend/infra/template.yaml
-sam deploy --guided --region ap-northeast-1
-```
+アプリのSAMテンプレートは、初回設定が作成した`LambdaExecutionRoleArn`を必須とします。開発用の固定名リソースを作成し、APIのデプロイ権限ではIAMロールの権限変更を許可しません。現在のテンプレートは`development`専用です。
 
-`EntraTenantId`、`EntraApiAudience`、`EntraRequiredScope`、`AllowedOrigin`を実環境に合わせます。初回は`TemplateKey`と`TemplateMappingKey`を空のままデプロイし、テンプレート配置後に更新できます。APIのURLには`development`などのステージ名が含まれます。
-
-SAMは従量課金のDynamoDB、PITR、暗号化、非公開・バージョニング付きS3、JWT認証付きHTTP API、Lambdaを定義しています。テーブルとS3バケットはスタック削除時も保持します。費用・保持データを確認してから環境を削除してください。失敗した出力の孤立ファイルを整理するバッチはまだありません。S3削除はバージョンを物理消去しないため、旧版も含む保持・整理の手順を運用前に決めます。
+DynamoDBは従量課金・PITR・暗号化、S3は非公開・バージョニング・暗号化を設定し、スタック削除時もデータを保持します。費用・保存期間・復旧を運用前に確認してください。実AWSへの配置や画面の保存先切り替えは、構成ファイルの追加だけでは実行されません。
 
 社員プロフィールは、実際のID・氏名・開始日を記載したJSONから明示的に作成します。以下の各値を実際の管理対象に置き換え、設定したAWS権限で実行します。既存プロフィールは上書きしません。履歴の自動インポートもしません。
 

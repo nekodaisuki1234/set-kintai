@@ -6,7 +6,11 @@ Parameters:
   Stage:
     Type: String
     Default: development
-    AllowedValues: [development, staging, production]
+    AllowedValues: [development]
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Pre-provisioned runtime role from the OIDC bootstrap stack
+    AllowedPattern: '^arn:aws:iam::[0-9]{12}:role/set-kintai-development-runtime$'
   EntraTenantId:
     Type: String
     Description: Lowercase Microsoft Entra tenant ID; tenant-specific tokens only
@@ -30,7 +34,7 @@ Parameters:
     Type: String
     Default: ''
     AllowedPattern: '^(templates/[A-Za-z0-9][A-Za-z0-9._/-]{0,200})?$'
-    Description: Approved xlsx template key in the private bucket; blank disables export
+    Description: Approved xlsx/xlsm template key in the private bucket; blank disables export
   TemplateMappingKey:
     Type: String
     Default: ''
@@ -43,6 +47,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      TableName: !Sub '${AWS::StackName}-records'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: PK
@@ -69,6 +74,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      BucketName: !Sub '${AWS::StackName}-files-${AWS::AccountId}-${AWS::Region}'
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -113,50 +119,6 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${AWS::StackName}/attendance'
       RetentionInDays: 30
 
-  AttendanceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: AttendanceStorage
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: EmployeeRecords
-                Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:BatchGetItem
-                  - dynamodb:Query
-                  - dynamodb:PutItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:ConditionCheckItem
-                Resource: !GetAtt AttendanceTable.Arn
-              - Sid: ReadApprovedTemplates
-                Effect: Allow
-                Action: s3:GetObject
-                Resource: !Sub '${AttendanceFiles.Arn}/templates/*'
-              - Sid: PrivateExports
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:DeleteObject
-                Resource: !Sub '${AttendanceFiles.Arn}/outputs/*'
-              - Sid: FunctionLogs
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !GetAtt AttendanceLogs.Arn
-
   AttendanceApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -184,13 +146,14 @@ Resources:
     Metadata:
       BuildMethod: makefile
     Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
       CodeUri: ../..
       Handler: backend/src/lambda.handler
       Runtime: nodejs24.x
       Architectures: [arm64]
       MemorySize: 1024
       Timeout: 30
-      Role: !GetAtt AttendanceRole.Arn
+      Role: !Ref LambdaExecutionRoleArn
       LoggingConfig:
         LogGroup: !Ref AttendanceLogs
         LogFormat: JSON

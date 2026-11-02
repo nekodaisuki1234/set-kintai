@@ -1,0 +1,116 @@
+name: AWS development deploy
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: set-kintai-development-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+  AWS_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_CLOUDFORMATION_ROLE_ARN }}
+  AWS_LAMBDA_ROLE_ARN: ${{ vars.AWS_LAMBDA_ROLE_ARN }}
+  AWS_ARTIFACT_BUCKET: ${{ vars.AWS_ARTIFACT_BUCKET }}
+  ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
+  ENTRA_API_AUDIENCE: ${{ vars.ENTRA_API_AUDIENCE }}
+  ENTRA_REQUIRED_SCOPE: ${{ vars.ENTRA_REQUIRED_SCOPE }}
+  TEMPLATE_KEY: ${{ vars.TEMPLATE_KEY }}
+  TEMPLATE_MAPPING_KEY: ${{ vars.TEMPLATE_MAPPING_KEY }}
+  SAM_CLI_TELEMETRY: '0'
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main' && github.repository == 'nekodaisuki1234/set-kintai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      package_sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Stop before requesting AWS credentials if configuration is incomplete
+        run: python3 scripts/aws-deploy.py
+      - name: Install checksum-pinned scanner
+        run: |
+          python3 scripts/security/install.py --destination "$RUNNER_TEMP/set-security-tools"
+          echo "$RUNNER_TEMP/set-security-tools" >> "$GITHUB_PATH"
+      - name: Check private files, secrets, and guard behavior
+        run: |
+          python3 scripts/security/check.py
+          python3 -m unittest discover -s tests/security -p 'test_*.py'
+          node --test tests/security/oidc.test.cjs
+      - name: Validate backend dependencies and behavior
+        run: |
+          npm ci --prefix backend --ignore-scripts
+          npm audit --prefix backend --omit=dev --audit-level=moderate
+          npm test --prefix backend
+      - uses: aws-actions/setup-sam@f84ec7d548307efafe33230528756de3c5841a17 # v2
+        with:
+          version: 1.171.0
+      - name: Validate and build before obtaining AWS credentials
+        run: |
+          sam validate --lint --template-file backend/infra/github-oidc.yaml --region ap-northeast-1
+          sam validate --lint --template-file backend/infra/template.yaml --region ap-northeast-1
+          sam build --template-file backend/infra/template.yaml
+      - name: Package the verified Lambda build
+        id: package
+        run: |
+          tar -czf "$RUNNER_TEMP/set-kintai-sam.tar.gz" -C .aws-sam build
+          DIGEST=$(sha256sum "$RUNNER_TEMP/set-kintai-sam.tar.gz" | cut -d ' ' -f 1)
+          echo "sha256=$DIGEST" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-development-build
+          path: ${{ runner.temp }}/set-kintai-sam.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: aws-actions/setup-sam@f84ec7d548307efafe33230528756de3c5841a17 # v2
+        with:
+          version: 1.171.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-development-build
+          path: ${{ runner.temp }}/verified-build
+      - name: Verify the artifact from this run and recheck configuration
+        env:
+          EXPECTED_SHA256: ${{ needs.validate.outputs.package_sha256 }}
+        run: |
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$RUNNER_TEMP/verified-build/set-kintai-sam.tar.gz" | sha256sum --check --status
+          mkdir -p .aws-sam
+          tar -xzf "$RUNNER_TEMP/verified-build/set-kintai-sam.tar.gz" -C .aws-sam
+          python3 scripts/aws-deploy.py
+      - name: Obtain temporary AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-1
+          audience: sts.amazonaws.com
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: set-kintai-${{ github.run_id }}
+          role-duration-seconds: 3600
+          unset-current-credentials: true
+          mask-aws-account-id: true
+      - name: Deploy development stack using the restricted CloudFormation role
+        run: python3 scripts/aws-deploy.py --deploy
