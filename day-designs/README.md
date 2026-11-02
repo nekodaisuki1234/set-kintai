@@ -1,6 +1,6 @@
 # day. デザイン候補
 
-公開URL: https://nekodaisuki1234.github.io/catGame/day-designs/
+公開URL: https://nekodaisuki1234.github.io/set-kintai/day-designs/
 
 ### iPhoneの通知受信とホーム画面への追加
 
@@ -80,7 +80,7 @@ Aの初期画面と日別編集で「要件定義・設計・製造・テスト�
 
 このフォルダは単独で配置できます。index.html と5つの候補HTML、a-paper-app.html、studies.css、studies.js、night-art.svg、paper.css、paper-holidays.js、paper-core.js、paper-config.js、paper-repository.js、paper-app.js を同じ階層に置いてください。アプリ本体へのリンクは絶対URLを使用しています。
 
-元の候補一覧（attendance-demo/designs/）も引き続き利用できます。catGameを含まないホスト名への切り替えには、別のGitHub Pagesリポジトリ等の公開先設定が必要です。
+元の候補一覧（attendance-demo/designs/）も引き続き利用できます。リポジトリ名の変更に伴い、公開先は `/set-kintai/` に移動しました。以前のURLでiPhoneのホーム画面に追加した場合は、新しいURLから追加し直してください。
 
 出勤・退勤ボタンは、記録後も押すと表示中の時刻で同じ項目だけを上書きします。出勤前の退勤は無効です。B・D・Nightには取消や確認ダイアログはありません。時刻・休憩の整合性が合わない場合や保存失敗では、元の記録を保持します。
 

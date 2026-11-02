@@ -1,6 +1,6 @@
 # day. デザイン候補
 
-公開URL: https://nekodaisuki1234.github.io/catGame/attendance-demo/designs/
+公開URL: https://nekodaisuki1234.github.io/set-kintai/attendance-demo/designs/
 
 社員は架空の田中花子1人。2026年10月27日の固定サンプルと前日1日分だけを使います。勤務前・勤務中・退勤後の表示を、全候補で同じ内容に切り替えられます。各ページの「画面だけ見る」で比較用メニューを隠し、実際の画面に近い状態でも見られます。
 

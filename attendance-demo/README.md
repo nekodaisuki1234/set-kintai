@@ -2,7 +2,7 @@
 
 スマートフォン向けの勤怠アプリを、架空の社員50名で試せるモックです。
 
-公開URL: https://nekodaisuki1234.github.io/catGame/attendance-demo/?v=overwrite1
+公開URL: https://nekodaisuki1234.github.io/set-kintai/attendance-demo/?v=overwrite1
 
 ## 試せること
 
