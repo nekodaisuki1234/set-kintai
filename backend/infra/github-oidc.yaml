@@ -155,7 +155,9 @@ Resources:
               - Sid: ApplicationLogGroup
                 Effect: Allow
                 Action: [logs:CreateLogGroup, logs:DeleteLogGroup, logs:PutRetentionPolicy, logs:DeleteRetentionPolicy, logs:TagResource, logs:UntagResource, logs:ListTagsForResource, logs:TagLogGroup, logs:UntagLogGroup, logs:ListTagsLogGroup]
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/set-kintai-development/attendance:*'
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/set-kintai-development/attendance'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/set-kintai-development/attendance:*'
               - Sid: DescribeLogGroups
                 Effect: Allow
                 Action: logs:DescribeLogGroups
