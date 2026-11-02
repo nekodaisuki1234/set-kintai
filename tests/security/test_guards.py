@@ -26,7 +26,6 @@ bootstrap = module('bootstrap_aws', 'scripts/bootstrap-aws.py')
 def configuration():
     account = '111122223333'
     return {'AWS_ACCOUNT_ID':account,
-            'AWS_DEPLOY_ROLE_ARN':f'arn:aws:iam::{account}:role/set-kintai-development-github',
             'AWS_CLOUDFORMATION_ROLE_ARN':f'arn:aws:iam::{account}:role/set-kintai-development-cloudformation',
             'AWS_LAMBDA_ROLE_ARN':f'arn:aws:iam::{account}:role/set-kintai-development-runtime',
             'AWS_ARTIFACT_BUCKET':f'set-kintai-development-artifacts-{account}-ap-northeast-1',
@@ -37,70 +36,75 @@ class DeploymentGuards(unittest.TestCase):
     def test_missing_and_cross_account_config_rejected(self):
         for key in configuration():
             value = configuration(); del value[key]
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                deploy.configuration(value)
+            with self.subTest(key=key), self.assertRaises(ValueError): deploy.configuration(value)
         for key, invalid in [('AWS_ACCOUNT_ID','000000000000'),('AWS_LAMBDA_ROLE_ARN','arn:aws:iam::999988887777:role/set-kintai-development-runtime'),
                              ('ENTRA_TENANT_ID','common'),('ENTRA_API_AUDIENCE','https://graph.microsoft.com'),
                              ('ENTRA_REQUIRED_SCOPE','read write'),('TEMPLATE_KEY','templates/../../private.xlsm'),
-                             ('TEMPLATE_KEY','templates/test.xlsm')]:
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                deploy.configuration({**configuration(),key:invalid})
+                             ('TEMPLATE_KEY','templates/test.xlsm'),('AWS_SECRET_ACCESS_KEY','must-not-be-accepted')]:
+            with self.subTest(key=key), self.assertRaises(ValueError): deploy.configuration({**configuration(),key:invalid})
 
-    def test_no_shell_and_no_secrets_in_deployment_command(self):
-        env = configuration()
-        args = deploy.deploy_arguments(env)
-        self.assertEqual(args[:2],['sam','deploy'])
-        self.assertIn('set-kintai-development',args)
+    def test_explicit_profile_and_no_shell_in_deployment_command(self):
+        args=deploy.deploy_arguments(configuration(),'set-kintai-dev')
+        self.assertEqual(args[:4],['sam','deploy','--profile','set-kintai-dev'])
         self.assertIn('ParameterKey=TemplateKey,ParameterValue=""',args)
         self.assertIn('ParameterKey=Stage,ParameterValue="development"',args)
         self.assertNotIn('CAPABILITY_IAM',args)
-        self.assertFalse(any('secret' in value.lower() or 'password' in value.lower() for value in args))
+        for profile in [None,'','--debug','name with spaces','bad;command']:
+            with self.subTest(profile=profile), self.assertRaises(ValueError): deploy.deploy_arguments(configuration(),profile)
+
+    def arguments(self, directory, *extra):
+        path=Path(directory,'deploy.local.json')
+        import json
+        path.write_text(json.dumps(configuration()))
+        return ['aws-deploy.py','--config',str(path),*extra]
 
     def test_check_mode_never_calls_aws(self):
-        with patch.dict(os.environ,configuration(),clear=True), patch('sys.argv',['aws-deploy.py']), patch.object(subprocess,'run') as run, contextlib.redirect_stdout(io.StringIO()):
+        with tempfile.TemporaryDirectory() as directory, patch('sys.argv',self.arguments(directory)), patch.object(subprocess,'run') as run, contextlib.redirect_stdout(io.StringIO()):
             deploy.main();run.assert_not_called()
 
-    def test_wrong_branch_or_runtime_identity_never_deploys(self):
-        env = {**configuration(),'GITHUB_REPOSITORY_ID':'1414011126','GITHUB_REF':'refs/pull/10/merge'}
-        with patch.dict(os.environ,env,clear=True), patch('sys.argv',['aws-deploy.py','--deploy']), patch.object(subprocess,'run') as run:
+    def test_github_execution_and_missing_profile_stop_before_checks_and_aws(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for environment, extra in [({'GITHUB_ACTIONS':'true'},['--profile','set-kintai-dev']),({},[])]:
+                with patch.dict(os.environ,environment,clear=True), patch('sys.argv',self.arguments(directory,'--deploy',*extra)), patch.object(deploy,'local_checks') as checks, patch.object(subprocess,'run') as run:
+                    with self.assertRaises(ValueError): deploy.main()
+                    checks.assert_not_called();run.assert_not_called()
+
+    def test_only_temporary_roles_in_target_account_are_accepted(self):
+        account=configuration()['AWS_ACCOUNT_ID']
+        deploy.validate_identity({'Account':account,'Arn':f'arn:aws:sts::{account}:assumed-role/SSODeveloper/session'},account)
+        for identity in [{'Account':'999988887777','Arn':'arn:aws:sts::999988887777:assumed-role/SSODeveloper/session'},
+                         {'Account':account,'Arn':f'arn:aws:iam::{account}:root'},
+                         {'Account':account,'Arn':f'arn:aws:iam::{account}:user/admin'},{}]:
+            with self.assertRaises(ValueError): deploy.validate_identity(identity,account)
+
+    def test_dirty_tree_stops_before_build_or_aws(self):
+        response=subprocess.CompletedProcess([],0,' M backend/src/service.cjs')
+        with patch.object(subprocess,'run',return_value=response) as run:
+            with self.assertRaises(ValueError): deploy.local_checks()
+            self.assertEqual(run.call_count,1)
+            self.assertEqual(run.call_args.args[0][:2],['git','status'])
+
+    def test_local_failures_prevent_aws_calls(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ,{},clear=True), patch('sys.argv',self.arguments(directory,'--deploy','--profile','set-kintai-dev')), patch.object(deploy,'local_checks',side_effect=ValueError('validation failed')), patch.object(subprocess,'run') as run:
             with self.assertRaises(ValueError): deploy.main()
             run.assert_not_called()
-        env['GITHUB_REF']='refs/heads/main'
-        response = subprocess.CompletedProcess([],0,'{"Account":"111122223333","Arn":"arn:aws:iam::111122223333:user/admin"}')
-        with patch.dict(os.environ,env,clear=True), patch('sys.argv',['aws-deploy.py','--deploy']), patch.object(subprocess,'run',return_value=response) as run:
+
+    def test_wrong_account_stops_before_sam_deploy(self):
+        response=subprocess.CompletedProcess([],0,'{"Account":"999988887777","Arn":"arn:aws:sts::999988887777:assumed-role/SSODeveloper/session"}')
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ,{},clear=True), patch('sys.argv',self.arguments(directory,'--deploy','--profile','set-kintai-dev')), patch.object(deploy,'local_checks'), patch.object(subprocess,'run',return_value=response) as run:
             with self.assertRaises(ValueError): deploy.main()
             self.assertEqual(run.call_count,1)
+            self.assertEqual(run.call_args.args[0][:3],['aws','--profile','set-kintai-dev'])
 
-    def test_bootstrap_reuses_shared_provider_without_mutating_it(self):
-        arn='arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com'
-        answers=[{'Account':'111122223333'},{'OpenIDConnectProviderList':[{'Arn':arn}]},
-                 {'Stacks':[{'Parameters':[{'ParameterKey':'ExistingOidcProviderArn','ParameterValue':arn}]}]},
-                 {'Url':'token.actions.githubusercontent.com','ClientIDList':['sts.amazonaws.com']},
-                 {'Stacks':[{'Outputs':[]}]}]
-        with patch.object(bootstrap,'aws',side_effect=answers) as query, patch.object(subprocess,'run') as mutate, patch('sys.argv',['bootstrap-aws.py','--subject',sorted(bootstrap.SUBJECTS)[0]]), contextlib.redirect_stdout(io.StringIO()):
+    def test_bootstrap_uses_selected_aws_profile_without_external_trust(self):
+        response=subprocess.CompletedProcess([],0,'{"Stacks":[{"Outputs":[]}]}')
+        with patch('sys.argv',['bootstrap-aws.py','--profile','admin-sso']), patch.object(subprocess,'run',return_value=response) as run, contextlib.redirect_stdout(io.StringIO()):
             bootstrap.main()
-            mutate.assert_called_once()
-            self.assertIn('ExistingOidcProviderArn='+arn,mutate.call_args.args[0])
-            self.assertFalse(any('delete-open-id-connect-provider' in str(call) for call in query.call_args_list))
-
-    def test_bootstrap_keeps_ownership_of_its_provider_on_rerun(self):
-        arn='arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com'
-        answers=[{'Account':'111122223333'},{'OpenIDConnectProviderList':[{'Arn':arn}]},
-                 {'Stacks':[{'Parameters':[{'ParameterKey':'ExistingOidcProviderArn','ParameterValue':''}]}]},
-                 {'Url':'token.actions.githubusercontent.com','ClientIDList':['sts.amazonaws.com']},
-                 {'Stacks':[{'Outputs':[]}]}]
-        with patch.object(bootstrap,'aws',side_effect=answers), patch.object(subprocess,'run') as mutate, patch('sys.argv',['bootstrap-aws.py','--subject',sorted(bootstrap.SUBJECTS)[0]]), contextlib.redirect_stdout(io.StringIO()):
-            bootstrap.main()
-            self.assertIn('ExistingOidcProviderArn=',mutate.call_args.args[0])
-
-    def test_incompatible_shared_provider_stops_before_mutation(self):
-        arn='arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com'
-        answers=[{'Account':'111122223333'},{'OpenIDConnectProviderList':[{'Arn':arn}]},
-                 {'Stacks':[{'Parameters':[{'ParameterKey':'ExistingOidcProviderArn','ParameterValue':arn}]}]},
-                 {'Url':'token.actions.githubusercontent.com','ClientIDList':['different-audience']}]
-        with patch.object(bootstrap,'aws',side_effect=answers), patch.object(subprocess,'run') as mutate, patch('sys.argv',['bootstrap-aws.py','--subject',sorted(bootstrap.SUBJECTS)[0]]):
-            with self.assertRaises(SystemExit): bootstrap.main()
-            mutate.assert_not_called()
+            self.assertEqual(run.call_count,2)
+            args=run.call_args_list[0].args[0]
+            self.assertEqual(args[:3],['aws','--profile','admin-sso'])
+            self.assertIn('set-kintai-deployment-development',args)
+            self.assertFalse(any('github' in arg.lower() or 'oidc' in arg.lower() for arg in args))
 
 class SecretGuards(unittest.TestCase):
     def test_private_names_and_public_code(self):

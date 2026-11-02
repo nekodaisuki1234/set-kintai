@@ -1,26 +1,33 @@
-# AWSへの接続準備（開発環境）
+# ローカルGitからAWSへ直接配置
 
-この手順は、公開／非公開どちらのリポジトリでも長期AWSアクセスキーを保存せずに運用するためのものです。画面はまだGitHub Pages、勤怠保存はブラウザ内です。AWSの初回設定が終わるまで実際の接続・配置は行われません。
+ソースと履歴はローカルGitで管理し、開発PCまたは配置用のローカルサーバーからAWS CLI／SAM CLIで直接配置します。GitHubとの認証連携、GitHub ActionsからのAWS配置、GitHub Secretsは使いません。AWSへの接続は、管理者が用意したIAM Identity CenterのSSOプロファイルと一時資格情報を使います。
 
-## 保管場所
+```text
+開発PC → ローカルGitにコミット → 必要なら社内Gitサーバーへpush
+配置するPC／サーバー → AWSへログイン → 検査・ビルド → AWSに配置
+```
 
-| 内容 | 保管場所 |
+Gitで履歴を保存し、AWSへの反映はデプロイコマンドで行います。配置サーバーへのインターネットからの着信や、公開SSH・Webhookは不要です。ローカルGitは別媒体・別ホストにも履歴ごとバックアップしてください。
+
+現在の画面はまだGitHub Pages、勤怠保存はブラウザ内です。AWS初回設定・Microsoft 365の本物のログイン・画面のAPI接続・画面のS3＋CloudFrontへの移行は、それぞれ実設定が必要です。現在の公開画面をAWSへ移して動作確認した後、旧公開先を終了できます。
+
+## 秘密情報と設定の保管場所
+
+| 内容 | 場所 |
 | --- | --- |
-| コード、AWS構成、値を含まない設定例 | Git |
-| AWSアカウントID・ロールARN・バケット名、EntraテナントID・APIアプリID | GitHub Actions **Variables**（秘密ではない環境設定） |
+| コード、AWS構成、設定例 | ローカルGit |
+| AWS CLIのSSO設定・セッション | AWS CLIが管理するユーザー領域。リポジトリ外 |
+| アカウントID・ロールARN・バケット名・Entra ID | `deploy.local.json`。Git対象外。秘密鍵は入れない |
 | ログイン用パスワード | Microsoft 365。勤怠アプリは保存しない |
-| AWSアクセスキー | 発行・GitHub登録不要。ActionsはOIDC、LambdaはIAMロール |
-| 将来必要になる通知用秘密鍵・外部APIの秘密情報 | AWS Secrets Manager。今回のAPIにはまだ不要 |
-| 社員プロフィール、勤怠、本人の設定 | DynamoDB |
-| 実際の会社Excel・提出ファイル・スナップショット | 非公開S3 |
+| 将来の通知用秘密鍵など | AWS Secrets Manager |
+| 社員の勤怠・個人設定 | DynamoDB |
+| 実Excel・提出ファイル | 非公開S3 |
 
-フロントのJavaScriptに埋め込んだ値は利用者から見えます。GitHub Secretsからビルドへ渡しても秘密にはなりません。機密情報を扱う処理はサーバー側に置きます。
+フロントのJavaScriptに入れた値はブラウザから見えます。秘密情報を使う処理はサーバー側で行います。固定のAWSアクセスキーをアプリやGitに保存しません。
 
-## 誤コミット防止
+## ローカルの必要ツールと検査
 
-`.gitignore` は `.env`、ローカルAWS資格情報、鍵、SAMの実設定、個人プロフィール、Excel・CSVなどを対象外にします。`scripts/security/check.py` は強制追加されたファイルも拒否し、Gitleaks 8.30.1で秘密情報のパターンを検査します。ツールの配布物はSHA-256を確認してからインストールします。
-
-ローカルの初回設定（Linux/macOS。WindowsはWSL）:
+Git、Python 3.10以降、Node.js 24、AWS CLI v2、SAM CLI 1.171.0、makeを用意します。Linux/macOSを想定し、WindowsはWSLを使います。Gitleaks 8.30.1は同梱のインストーラーで取得・SHA-256検証します。
 
 ```sh
 python3 scripts/security/install.py --destination "$HOME/.local/bin"
@@ -29,82 +36,84 @@ git config core.hooksPath .githooks
 python3 scripts/security/check.py
 ```
 
-`pre-commit` はステージ済みの内容を検査します。未導入・検査失敗時はコミットを止めます。GitHubの **Repository security** はpush・PR・手動実行時に全追跡ファイルと取得したGit履歴を検査します。CIは`fetch-depth: 0`で全履歴を取得し、過去に追加後削除された秘密情報も対象にします。検出した値・行の内容・スキャナの生ログは公開せず、ファイル名・行番号・ルール・コミットだけを出します。
+`.gitignore`とコミット前のhookで、`.env`・鍵・実設定・社員プロフィール・Excel・CSV等の誤追加を防ぎ、Gitleaksで秘密情報のパターンを検査します。強制追加も検査対象です。検出した値は表示せず、ファイル・行番号・検出ルールだけを表示します。個人情報の意味を完全に判定する仕組みではないため、実データは`private/`などの非追跡領域で扱います。
 
-CIはpush後に動くため、公開を事前に止める仕組みとして、GitHubの **Settings → Code security / Secret protection** で利用可能なSecret scanningとPush protectionも有効にしてください。設定名・利用可否はアカウント／プランによります。さらにmainへの変更に **Private files and secret history** を必須チェックとして設定すると、失敗したPRのマージを防げます。これらGitHub管理設定は、このコードの追加だけでは変更されません。
+既存のGitHub側にある検証workflowは旧公開先を維持している間のコード検査だけで、AWSの認証・配置はできません。今後の配置はローカルの検査で完結します。
 
-検査は社員の個人情報を意味から完全に判定するものではありません。実社員データは`private/`等の非追跡領域で扱います。実際の資格情報を公開した場合は、ファイルを消すだけでなく発行元で失効・再発行してください。元のレポートをIssueやチャットへ貼りません。
+## 1. AWSへのログインを準備
 
-## 1. GitHubが発行する識別子を確認
+AWS管理者がIAM Identity Centerを設定し、開発用アカウントに利用者と権限セットを割り当てます。勤怠アプリ用のMicrosoft 365ログインとは別の、AWS管理操作用の設定です。会社のSSOを使う場合はその管理設定に従います。
 
-[Repository security](https://github.com/nekodaisuki1234/set-kintai/actions/workflows/repository-security.yml) のmain実行を開き、**OIDC bootstrap identity** のSummaryにある `subject` をコピーします。トークン本体は表示しません。AWSへの接続もまだ行いません。
-
-GitHubでは作成時期・設定によりsubjectにIDが付く形式があるため、名前だけで推測せず、実際の値を使います。このリポジトリID `1414011126`、所有者ID `79440835` と `refs/heads/main` を検査します。PR、fork、他のブランチ、Environment用のsubjectは拒否します。
-
-## 2. AWS CloudShellで初回設定
-
-東京リージョン `ap-northeast-1` を開き、IAMロール・OIDCプロバイダー・CloudFormation・S3を設定できる管理用のログインでCloudShellを起動します。アクセスキーをチャットやGitに渡す必要はありません。
+初回設定を行う管理用プロファイルと、日常配置用のプロファイルを分けます。既存のプロファイル名を使う場合は、以下の名前を読み替えます。
 
 ```sh
-git clone https://github.com/nekodaisuki1234/set-kintai.git
-cd set-kintai
-python3 scripts/bootstrap-aws.py --subject '上で確認したsubjectを貼る'
+aws configure sso --profile set-kintai-admin
+aws sso login --profile set-kintai-admin
 ```
 
-このコマンドは `set-kintai-oidc-development` スタックを作成／更新し、次を準備します。
+SSO開始URLとSSOリージョンは管理者が指定した値を使います。アプリの配置先は東京`ap-northeast-1`です。SSOをまだ設定していない場合、AWSコンソールに入れたことだけでこのコマンドが使える状態になったとは扱いません。
 
-- GitHubのOIDCプロバイダー。既存の共有プロバイダーがあれば流用し、設定を置き換えません。
-- このリポジトリのmainだけを信頼するデプロイ用IAMロール。
-- CloudFormation用の構成変更ロールと、Lambda用の実行ロール。
-- 配置用ZIPを置く非公開・暗号化・バージョニング付きS3バケット。
+## 2. 初回のAWS権限を準備
 
-ここでは勤怠のDynamoDB・API・Lambdaは作成しません。GitHubのロールにはAdministratorAccess、IAMロールの作成・権限変更、勤怠データへの直接アクセスを与えません。CloudFormationもIAMロールの権限を書き換えず、事前作成済みの実行ロールだけをLambdaへ渡します。DynamoDB・S3・Lambda・ログは開発用の固定リソースに限定します。HTTP APIは作成前にIDが不明のため、構成変更ロールのAPI Gateway管理権限は東京リージョンのHTTP API用パスに限定しています。開発用AWSアカウントを分ける構成を推奨します。
+管理用SSOプロファイルで次を実行します。CloudShellで行う場合は、ソースをアップロードしてから`--profile`を省略し、コンソールの認証を使えます。
 
-表示された次の5項目を、GitHubの [Settings → Secrets and variables → Actions → Variables](https://github.com/nekodaisuki1234/set-kintai/settings/variables/actions) に登録します。**SecretsではなくVariables**です。
+```sh
+python3 scripts/bootstrap-aws.py --profile set-kintai-admin
+```
 
-| Variable | 値 |
-| --- | --- |
-| `AWS_ACCOUNT_ID` | AWSアカウントID |
-| `AWS_DEPLOY_ROLE_ARN` | GitHub用ロールARN |
-| `AWS_CLOUDFORMATION_ROLE_ARN` | CloudFormation用ロールARN |
-| `AWS_LAMBDA_ROLE_ARN` | Lambda用ロールARN |
-| `AWS_ARTIFACT_BUCKET` | 配置ファイル用S3バケット名 |
+`set-kintai-deployment-development`スタックで作成するもの:
 
-GitHub Environmentはこの手順では設定しません。Environmentを使うとOIDC subjectが変わるため、導入する場合は信頼ポリシーと検査を併せて変更します。
+- 配置ZIP用の非公開・暗号化・バージョニング付きS3。
+- CloudFormation用の構成変更ロール。
+- 勤怠Lambda用の実行ロール。
+- 日常の配置担当に割り当てる`set-kintai-development-deploy`管理ポリシー。
 
-## 3. Microsoft 365の登録後に追加する設定
+外部IDプロバイダーやGitHubを信頼するロールは作りません。ここでは勤怠DB・API・Lambdaもまだ作りません。
 
-以下が未設定の間、デプロイworkflowはAWS資格情報を取得する前に停止します。認証なしでAPIを作る回避経路は用意しません。
+管理者は、出力された配置用ポリシーをIAM Identity Centerの配置担当の権限セットに「カスタマー管理ポリシー参照」として追加し、対象AWSアカウントへプロビジョニングします。日常配置は開発用スタック・配置用バケットと、指定のCloudFormationロールを渡す操作に限定します。CloudFormation用ロールもIAMロールの作成・権限変更はできません。HTTP APIのIDは作成前に決まらないため、その管理操作は東京のHTTP API用パスに限定しています。
 
-| Variable | 値 |
-| --- | --- |
-| `ENTRA_TENANT_ID` | 勤怠を利用する会社のテナントUUID |
-| `ENTRA_API_AUDIENCE` | 勤怠APIアプリのclient ID（v2アクセストークンのaudience）。画面側アプリやMicrosoft GraphのIDを使わない |
-| `ENTRA_REQUIRED_SCOPE` | 委任scope名。省略時 `access_as_user` |
-| `TEMPLATE_KEY` | 承認した会社ExcelのS3キー。初回は空欄 |
-| `TEMPLATE_MAPPING_KEY` | 対応するセル設定のS3キー。初回は空欄 |
+表示された4項目を、次の設定ファイルへコピーします。
 
-テンプレートの2項目は両方を空欄にするとExcel出力を無効化します。設定する場合は両方を`templates/`以下のキーにします。実ファイルや社員情報はGitに追加しません。これらはアプリログインの完成とは別工程です。
+```sh
+cp backend/examples/deploy.example.json deploy.local.json
+```
 
-## 4. 開発用APIの配置
+`AWS_ACCOUNT_ID`、`AWS_CLOUDFORMATION_ROLE_ARN`、`AWS_LAMBDA_ROLE_ARN`、`AWS_ARTIFACT_BUCKET`を埋めます。既存の実設定ファイルには`cp`で上書きせず、必要な値を編集してください。
 
-[**AWS development deploy**](https://github.com/nekodaisuki1234/set-kintai/actions/workflows/aws-development-deploy.yml) で **Run workflow → main** を選びます。pushだけではAWSへ配置しません。
+## 3. Microsoft 365のAPI設定を追加
 
-設定チェック → 秘密情報検査 → ガードのテスト → 本番依存監査・APIテスト → AWS構成検証・ビルド → 別ジョブで成果物のSHA-256を確認 → OIDCで一時資格情報を取得 → 配置、の順です。依存関係のインストール・テスト・ビルドのジョブにはOIDCトークンの発行権限を与えません。第三者ActionはコミットSHA、SAM CLIはバージョンを固定します。外部入力をシェルコマンドとして評価せず、AWSアカウントと実際に引き受けたロールも確認します。同時デプロイは直列に処理します。
+`deploy.local.json`の`ENTRA_TENANT_ID`に会社のテナントUUID、`ENTRA_API_AUDIENCE`に勤怠APIアプリのclient ID（v2アクセストークンのaudience）を設定します。画面側アプリやMicrosoft GraphのIDを使いません。`ENTRA_REQUIRED_SCOPE`は委任scope名で、初期値は`access_as_user`です。
 
-対象は東京の `set-kintai-development` だけです。本番環境の自動作成や、認証を外したお試しAPIの配置は行いません。AWS API Gatewayがトークンの署名・発行者・audience・scopeを検証する構成を維持します。フロントの保存先はこのデプロイでは切り替わりません。
+`TEMPLATE_KEY`と`TEMPLATE_MAPPING_KEY`は初回は両方空欄にします。この場合、会社Excel出力は無効です。設定する場合は承認したテンプレートとセル設定を非公開S3の`templates/`以下に置き、両方のキーを指定します。ファイル本体や社員情報をGitに入れません。
 
-AWS上での最初の配置は実アカウントの権限とEntra設定が揃ってから確認します。ローカルテスト・SAM検証だけで、実AWSの権限確認や本番認証試験が完了したとは扱いません。
+```sh
+python3 scripts/aws-deploy.py --config deploy.local.json
+```
 
-## AWSへ画面も移した後のGitHub非公開化
+この設定確認だけではAWSに接続しません。必要な設定が不足していれば失敗し、認証を外して配置する回避経路はありません。
 
-画面をS3＋CloudFrontへ移し、ログインの戻り先URL、APIの許可origin、iPhoneのホーム画面追加を新しい公開先で確認してからGitHubを非公開にします。今回のworkflowはAPI用で、画面のAWSホスティングは別工程です。OIDCとCLI版Gitleaksの検査は非公開化後も利用できます。非公開化後のCloudShellでのソース取得にはGitHubへの認証が必要ですが、PATをURLやシェル履歴へ埋め込みません。
+## 4. ローカルから開発用APIを配置
 
-## 検証・復旧
+日常の配置用SSOプロファイルを設定し、コミット済みのソースから実行します。
 
-- 検査は `python3 -m unittest discover -s tests/security -p 'test_*.py'` と `node --test tests/security/oidc.test.cjs`。GitleaksをPATHに入れて実行します。
-- AWS構成は `sam validate --lint --template-file backend/infra/github-oidc.yaml --region ap-northeast-1` とアプリ用`template.yaml`で検証します。
-- 配置失敗時はCloudFormationのイベントを確認し、原因を直して同じworkflowを再実行します。資格情報や社員データをログへ追加して調査しません。
-- アプリのDynamoDB・S3は削除時も保持します。初回設定のOIDCプロバイダー・配置用S3も保持し、共有プロバイダーを自動削除しません。使用しなくなった版や保持データの削除は、運用ルールに沿って別途行います。
+```sh
+aws configure sso --profile set-kintai-dev
+aws sso login --profile set-kintai-dev
+python3 scripts/aws-deploy.py --profile set-kintai-dev --config deploy.local.json --deploy
+```
 
-参照: [GitHub OIDCとAWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)、[IAM OIDCProvider](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-iam-oidcprovider.html)、[Gitleaks](https://github.com/gitleaks/gitleaks)。
+実行順は、設定確認 → コミット漏れ確認 → 秘密情報検査・ガードのテスト → 本番依存監査・APIテスト → AWS構成検証・ビルド → 接続先AWSアカウントと一時ロールの確認 → SAMで直接配置、です。シェルとして設定値を評価せず、指定のAWSプロファイルをAWS CLIとSAMの両方へ渡します。未コミットのコード、設定不足、検査失敗、別アカウント、IAMユーザー／ルートの資格情報では配置を止めます。GitHub Actions上の配置実行も拒否します。
+
+対象は東京の`set-kintai-development`だけです。API GatewayでMicrosoft 365のトークン署名・発行者・audience・scopeを検証する構成を維持します。今回の配置はAPI用で、画面の保存先は切り替わりません。同じ環境へ複数の端末から同時に配置しないでください。
+
+実AWSへの初回配置は、管理者のSSO権限と実際のEntra設定が揃ってから確認します。ローカル検証だけでAWS上の権限や本番認証試験が完了したとは扱いません。
+
+## バックアップと旧公開先の終了
+
+Git履歴込みのバックアップは`git bundle create /安全な保存先/set-kintai.bundle --all`で作れます。別の端末では`git clone /保存先/set-kintai.bundle set-kintai`で復元できます。Git対象外の個人設定・AWS CLIのログイン状態は含みません。不要なGitHubリモートを登録せず、社内Gitサーバーを使う場合だけそのリモートを設定します。
+
+画面をS3＋CloudFrontへ移し、ログインの戻り先URL・APIの許可origin・iPhoneのホーム画面追加を確認してから、旧GitHub Pagesと残るGitHub側の検証・年次祝日更新を終了します。祝日更新は同梱スクリプトをローカルでも実行でき、AWS側での定期実行は別途設定します。
+
+DynamoDB・業務ファイル用S3・配置用S3はスタック削除時にも保持します。保存期間・旧版整理・復旧は運用ルールに沿って管理します。
+
+参照: [AWS CLIのSSO設定](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)、[SAMでの配置](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/using-sam-cli-deploy.html)。

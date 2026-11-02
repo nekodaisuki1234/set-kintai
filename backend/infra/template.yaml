@@ -9,7 +9,7 @@ Parameters:
     AllowedValues: [development]
   LambdaExecutionRoleArn:
     Type: String
-    Description: Pre-provisioned runtime role from the OIDC bootstrap stack
+    Description: Pre-provisioned runtime role from the AWS-local bootstrap stack
     AllowedPattern: '^arn:aws:iam::[0-9]{12}:role/set-kintai-development-runtime$'
   EntraTenantId:
     Type: String

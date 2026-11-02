@@ -2,9 +2,9 @@ name: Attendance backend checks
 on:
   push:
     branches: [main, codex/paper-batch9]
-    paths: ['backend/**', 'Makefile', '.github/workflows/attendance-backend-checks.yml', 'day-designs/paper-core.js', 'day-designs/paper-holidays.js', 'scripts/aws-*.py', 'scripts/aws-*.cjs', 'scripts/bootstrap-aws.py', 'tests/security/**', '.github/workflows/aws-development-deploy.yml']
+    paths: ['backend/**', 'Makefile', '.github/workflows/attendance-backend-checks.yml', 'day-designs/paper-core.js', 'day-designs/paper-holidays.js', 'scripts/aws-*.py', 'scripts/bootstrap-aws.py', 'tests/security/**']
   pull_request:
-    paths: ['backend/**', 'Makefile', '.github/workflows/attendance-backend-checks.yml', 'day-designs/paper-core.js', 'day-designs/paper-holidays.js', 'scripts/aws-*.py', 'scripts/aws-*.cjs', 'scripts/bootstrap-aws.py', 'tests/security/**', '.github/workflows/aws-development-deploy.yml']
+    paths: ['backend/**', 'Makefile', '.github/workflows/attendance-backend-checks.yml', 'day-designs/paper-core.js', 'day-designs/paper-holidays.js', 'scripts/aws-*.py', 'scripts/bootstrap-aws.py', 'tests/security/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
           version: 1.171.0
       - name: Validate AWS templates
         run: |
-          sam validate --lint --template-file backend/infra/github-oidc.yaml --region ap-northeast-1
+          sam validate --lint --template-file backend/infra/deployment-bootstrap.yaml --region ap-northeast-1
           sam validate --lint --template-file backend/infra/template.yaml --region ap-northeast-1
       - name: Verify Lambda packaging
         run: sam build --template-file backend/infra/template.yaml

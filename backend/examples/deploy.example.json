@@ -1,0 +1,11 @@
+{
+  "AWS_ACCOUNT_ID": "<AWSアカウントID>",
+  "AWS_CLOUDFORMATION_ROLE_ARN": "<初回設定のAWSCloudFormationRoleArn>",
+  "AWS_LAMBDA_ROLE_ARN": "<初回設定のAWSLambdaRoleArn>",
+  "AWS_ARTIFACT_BUCKET": "<初回設定のAWSArtifactBucket>",
+  "ENTRA_TENANT_ID": "<会社のEntraテナントUUID>",
+  "ENTRA_API_AUDIENCE": "<勤怠APIアプリのclient ID>",
+  "ENTRA_REQUIRED_SCOPE": "access_as_user",
+  "TEMPLATE_KEY": "",
+  "TEMPLATE_MAPPING_KEY": ""
+}

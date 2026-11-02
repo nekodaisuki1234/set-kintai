@@ -1,32 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: One-time GitHub OIDC roles and private deployment artifacts for SET Kintai development
-
-Parameters:
-  GitHubSubject:
-    Type: String
-    Description: Exact main-branch subject reported by the Repository security workflow (not a token)
-    AllowedValues:
-      - repo:nekodaisuki1234/set-kintai:ref:refs/heads/main
-      - repo:nekodaisuki1234@79440835/set-kintai@1414011126:ref:refs/heads/main
-  ExistingOidcProviderArn:
-    Type: String
-    Default: ''
-    AllowedPattern: '^$|^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$'
-    Description: Existing account-wide GitHub OIDC provider; leave blank only when none exists
-
-Conditions:
-  CreateOidcProvider: !Equals [!Ref ExistingOidcProviderArn, '']
+Description: AWS-local deployment roles and private artifacts for SET Kintai development
 
 Resources:
-  GitHubOidcProvider:
-    Type: AWS::IAM::OIDCProvider
-    Condition: CreateOidcProvider
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Url: https://token.actions.githubusercontent.com
-      ClientIdList: [sts.amazonaws.com]
-
   DeploymentArtifacts:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -163,56 +138,43 @@ Resources:
                 Action: logs:DescribeLogGroups
                 Resource: '*'
 
-  GitHubDeploymentRole:
-    Type: AWS::IAM::Role
+  LocalDeploymentPolicy:
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      RoleName: set-kintai-development-github
-      MaxSessionDuration: 3600
-      AssumeRolePolicyDocument:
+      ManagedPolicyName: set-kintai-development-deploy
+      Description: Attach to the developer IAM Identity Center permission set; no external identity trust
+      PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Principal:
-              Federated: !If [CreateOidcProvider, !Ref GitHubOidcProvider, !Ref ExistingOidcProviderArn]
-            Action: sts:AssumeRoleWithWebIdentity
+          - Sid: ApplicationStackOnly
+            Effect: Allow
+            Action: [cloudformation:CreateChangeSet, cloudformation:DescribeChangeSet, cloudformation:ExecuteChangeSet, cloudformation:DeleteChangeSet, cloudformation:DescribeStacks, cloudformation:DescribeStackEvents, cloudformation:GetTemplate, cloudformation:ListStackResources]
+            Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/set-kintai-development/*'
+          - Sid: ValidateTemplate
+            Effect: Allow
+            Action: [cloudformation:ValidateTemplate, cloudformation:GetTemplateSummary]
+            Resource: '*'
+          - Sid: PassOnlyCloudFormationRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt CloudFormationRole.Arn
             Condition:
               StringEquals:
-                token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Ref GitHubSubject
-      Policies:
-        - PolicyName: DeployDevelopmentStack
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: ApplicationStackOnly
-                Effect: Allow
-                Action: [cloudformation:CreateChangeSet, cloudformation:DescribeChangeSet, cloudformation:ExecuteChangeSet, cloudformation:DeleteChangeSet, cloudformation:DescribeStacks, cloudformation:DescribeStackEvents, cloudformation:GetTemplate, cloudformation:ListStackResources]
-                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/set-kintai-development/*'
-              - Sid: ValidateTemplate
-                Effect: Allow
-                Action: [cloudformation:ValidateTemplate, cloudformation:GetTemplateSummary]
-                Resource: '*'
-              - Sid: PassOnlyCloudFormationRole
-                Effect: Allow
-                Action: iam:PassRole
-                Resource: !GetAtt CloudFormationRole.Arn
-                Condition:
-                  StringEquals:
-                    iam:PassedToService: cloudformation.amazonaws.com
-              - Sid: ArtifactBucketMetadata
-                Effect: Allow
-                Action: [s3:GetBucketLocation, s3:ListBucket]
-                Resource: !GetAtt DeploymentArtifacts.Arn
-              - Sid: ApplicationArtifacts
-                Effect: Allow
-                Action: [s3:GetObject, s3:PutObject]
-                Resource: !Sub '${DeploymentArtifacts.Arn}/application/*'
+                iam:PassedToService: cloudformation.amazonaws.com
+          - Sid: ArtifactBucketMetadata
+            Effect: Allow
+            Action: [s3:GetBucketLocation, s3:ListBucket]
+            Resource: !GetAtt DeploymentArtifacts.Arn
+          - Sid: ApplicationArtifacts
+            Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource: !Sub '${DeploymentArtifacts.Arn}/application/*'
 
 Outputs:
   AWSAccountId:
     Value: !Ref AWS::AccountId
-  AWSDeployRoleArn:
-    Value: !GetAtt GitHubDeploymentRole.Arn
+  LocalDeploymentPolicyArn:
+    Value: !Ref LocalDeploymentPolicy
   AWSCloudFormationRoleArn:
     Value: !GetAtt CloudFormationRole.Arn
   AWSLambdaRoleArn:

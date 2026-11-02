@@ -173,17 +173,15 @@ npm test --prefix backend
 
 ## AWSを用意する順番
 
-[開発環境の接続・デプロイ手順](docs/aws-deployment.md)に、秘密情報の保管場所、誤コミット防止、CloudShellでのOIDC初回設定、GitHub Actions Variablesをまとめています。AWSアクセスキーをGitHubへ登録せず、mainから短時間の資格情報で配置します。
+[ローカルGitからAWSへ直接配置する手順](docs/aws-deployment.md)に、設定の保管場所、コミット前検査、SSOプロファイルと初回権限設定をまとめています。GitHubとAWSは認証連携せず、開発PCまたは配置用サーバーからAWS CLI／SAMで配置します。
 
-1. 東京の開発用AWSアカウントで、初回設定の`github-oidc.yaml`を適用します。OIDC・配置用S3・3つのIAMロールを準備し、DynamoDBやAPIはまだ作りません。
-2. Microsoft Entraで勤怠APIの登録・委任scope・アクセス対象を準備し、v2.0のアクセストークン用のtenant ID・API audience・scopeを設定します。
-3. GitHub Actionsの`AWS development deploy`をmainから実行します。AWS設定やEntra設定が不足していれば、AWS資格情報を取得する前に止めます。
-4. 実際の会社テンプレートとセル設定を非公開S3へ置き、対応するキーを設定して再配置します。未設定ではExcel出力を無効化します。
-5. 実社員プロフィールを事前登録し、Microsoft 365ログイン・画面のAPI接続・実機と実Excelの検証を進めます。
+1. AWS管理者がIAM Identity Centerの管理用・配置用SSO権限を準備します。
+2. `deployment-bootstrap.yaml`で非公開の配置用S3、CloudFormation・Lambdaのロール、配置担当の管理ポリシーを作り、配置担当に割り当てます。外部IDプロバイダーやGitHub用ロールは作りません。
+3. Git対象外の`deploy.local.json`にAWS・Entraの実設定を入れます。不足していればAWS接続前に停止します。
+4. ローカルGitへコミットした版を、検査・ビルドして開発用AWSへ直接配置します。
+5. 実テンプレートを非公開S3へ置き、実社員プロフィール・Microsoft 365ログイン・画面接続・実機とExcelの確認を進めます。
 
-アプリのSAMテンプレートは、初回設定が作成した`LambdaExecutionRoleArn`を必須とします。開発用の固定名リソースを作成し、APIのデプロイ権限ではIAMロールの権限変更を許可しません。現在のテンプレートは`development`専用です。
-
-DynamoDBは従量課金・PITR・暗号化、S3は非公開・バージョニング・暗号化を設定し、スタック削除時もデータを保持します。費用・保存期間・復旧を運用前に確認してください。実AWSへの配置や画面の保存先切り替えは、構成ファイルの追加だけでは実行されません。
+アプリのSAMテンプレートは`LambdaExecutionRoleArn`を必須とし、開発用の固定名リソースを使います。現在のテンプレートは`development`専用です。DynamoDBは従量課金・PITR・暗号化、S3は非公開・バージョニング・暗号化を設定し、スタック削除時も保持します。実AWSへの配置や画面の保存先切り替えは、構成ファイルの追加だけでは実行されません。
 
 社員プロフィールは、実際のID・氏名・開始日を記載したJSONから明示的に作成します。以下の各値を実際の管理対象に置き換え、設定したAWS権限で実行します。既存プロフィールは上書きしません。履歴の自動インポートもしません。
 

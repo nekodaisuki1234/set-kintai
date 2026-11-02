@@ -27,4 +27,4 @@ npm test --prefix backend
 
 AWS配置・認証の設定手順は[バックエンドの説明](backend/README.md)を参照してください。会社テンプレートや社員の実績ファイルは公開リポジトリには含めません。
 
-秘密情報の管理・GitHub OIDCでの配置は[開発環境の接続手順](backend/docs/aws-deployment.md)を参照してください。固定のAWSアクセスキーは使わず、設定が揃うまでAWS配置を止めます。
+開発はローカルGitで管理し、[ローカルからAWSへ直接配置する手順](backend/docs/aws-deployment.md)を使います。GitHubとAWSは認証連携せず、AWS CLIのSSOプロファイルで配置します。現在のGitHub Pagesは、画面のAWS移行が完了するまでの公開先です。

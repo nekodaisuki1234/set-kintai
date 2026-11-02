@@ -1,0 +1,41 @@
+SET 勤怠 — ローカル開発用
+
+1. ZIPを任意の場所へ解凍してください。
+   set-kintai フォルダーにコードと .git（履歴）が入っています。
+   GitHubへのリモート接続は登録していません。
+
+2. Gitがある場合、set-kintai フォルダーで確認できます。
+   git status
+   git log -5 --oneline
+
+3. 画面をローカルで確認する場合（Python 3が必要）
+   Windows:
+     py -3 -m http.server 8000 --bind 127.0.0.1
+   macOS / Linux:
+     python3 -m http.server 8000 --bind 127.0.0.1
+
+   ブラウザで http://127.0.0.1:8000/ を開いてください。
+   ログイン画面はモックです。「デモを開く」から確認できます。
+   サーバー停止は Ctrl+C です。
+   127.0.0.1 に限定しているため、このサーバーは同じPCからの確認用です。
+
+4. 編集・コミットの準備
+   Git / Python 3.10以降 / Node.js 24 を使用します。
+   backend/docs/aws-deployment.md のローカル検査の手順で
+   Gitleaksをインストールし、コミット前チェックを有効にしてください。
+
+5. AWSへの配置
+   backend/docs/aws-deployment.md を参照してください。
+   AWS CLIのSSOプロファイルから直接配置する方式です。
+   現在のMicrosoft 365ログイン・画面のAWS接続はまだ未実装です。
+   AWSへの初回設定・配置はまだ実行していません。
+
+このZIPに含まれるもの:
+   コード、Git履歴、設定例、テスト、手順書。
+
+含まれないもの:
+   AWS資格情報、deploy.local.json、社員の実データ、会社のExcel原本、
+   ブラウザ内に保存した勤怠データ、node_modules、ビルド成果物。
+
+現在の公開サイトとlocalhostではブラウザの保存領域が異なります。
+公開サイト側の勤怠データがローカル画面へ自動で移るわけではありません。
