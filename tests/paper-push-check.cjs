@@ -1,6 +1,6 @@
 "use strict";
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),vm=require("node:vm");
-const directory=path.join(__dirname,"../day-designs"),base="https://nekodaisuki1234.github.io/catGame/day-designs/",app=base+"a-paper-app.html?v=paper-reminders34";
+const directory=path.join(__dirname,"../day-designs"),base="https://nekodaisuki1234.github.io/set-kintai/day-designs/",app=base+"a-paper-app.html?v=paper-reminders34";
 const helper=fs.readFileSync(path.join(directory,"paper-push.js"),"utf8"),worker=fs.readFileSync(path.join(directory,"paper-notifications-sw.js"),"utf8");
 const plain=value=>JSON.parse(JSON.stringify(value));
 function environment(options={}){
