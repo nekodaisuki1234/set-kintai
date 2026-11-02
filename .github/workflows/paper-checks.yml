@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, 'codex/paper-batch9']
     paths:
+      - 'index.html'
       - 'day-designs/paper-*.js'
       - 'day-designs/paper*.css'
       - 'day-designs/paper.webmanifest'
@@ -15,6 +16,7 @@ on:
       - 'scripts/update-paper-holidays.cjs'
   pull_request:
     paths:
+      - 'index.html'
       - 'day-designs/paper-*.js'
       - 'day-designs/paper*.css'
       - 'day-designs/paper.webmanifest'

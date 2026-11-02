@@ -30,6 +30,10 @@ async function run(){
   });
   await page.reload();await page.locator("#startPunch").waitFor();
   const before=await snapshot(page);
+  await page.goto(origin+"/index.html");await page.locator("#microsoftLogin").waitFor();
+  assert.equal(new URL(page.url()).pathname,"/day-designs/a-paper-login.html","the repository entry opens the attendance login preview");
+  assert.deepEqual(await snapshot(page),before,"the new entry must preserve all existing attendance and unrelated data");
+  await page.goto(origin+"/day-designs/a-paper.html?screen=1");await page.locator("#startPunch").waitFor();
   await page.locator("#nav-settings").click();
   const preview=page.locator("a.login-preview-link");assert.match(await preview.getAttribute("href"),/a-paper-login\.html/);
   assert.equal(await preview.getAttribute("target"),"_blank");
