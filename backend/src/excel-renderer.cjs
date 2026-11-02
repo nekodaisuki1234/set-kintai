@@ -73,9 +73,9 @@ function validateMapping(mapping) {
   return mapping;
 }
 
-// Check the ZIP directory before ExcelJS expands it. Macro files cannot be round-tripped
-// by this renderer, so they must not silently become an ordinary .xlsx workbook.
-function validateTemplateBytes(bytes) {
+// Check the ZIP directory before expansion. VBA is enabled only for the explicit
+// SET .xlsm path; version 1 must never silently convert a macro workbook to .xlsx.
+function validateTemplateBytes(bytes, { allowVba = false } = {}) {
   if (!(Buffer.isBuffer(bytes) || bytes instanceof Uint8Array) || bytes.byteLength < 22 || bytes.byteLength > MAX_TEMPLATE_BYTES) {
     throw invalidTemplate("Excelテンプレートは8MB以内の.xlsxファイルを指定してください。");
   }
@@ -99,7 +99,7 @@ function validateTemplateBytes(bytes) {
     const next = offset + 46 + nameLength + extraLength + commentLength;
     if (next > end || flags & 1 || uncompressed === 0xffffffff) throw invalidTemplate("暗号化・ZIP64形式のテンプレートには対応していません。");
     const name = input.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
-    if (names.has(name) || /(?:^|\/)vbaProject\.bin$/i.test(name) || /(?:^|\/)macrosheets\//i.test(name)) throw invalidTemplate("マクロを含むテンプレートには対応していません。");
+    if (names.has(name) || (!allowVba && /(?:^|\/)vbaProject\.bin$/i.test(name)) || /(?:^|\/)macrosheets\//i.test(name) || name.includes("\\") || name.split("/").some(part => part === ".." || part === ".") || name.startsWith("/")) throw invalidTemplate("対応していないテンプレートの構造です。");
     names.add(name);
     expandedBytes += uncompressed;
     if (expandedBytes > MAX_UNCOMPRESSED_BYTES) throw invalidTemplate("展開後のテンプレートが64MBを超えています。");
@@ -139,9 +139,13 @@ function dayValues(state, day, now) {
   return values;
 }
 
-function createExcelRenderer({ ExcelJS } = {}) {
+function createExcelRenderer() {
   return {
     async render({ templateBytes, mapping, state, period, now }) {
+      if (mapping?.version === 2 && mapping.layout === "set-report") {
+        const { renderSetReport } = require("./set-report.cjs");
+        return renderSetReport({ templateBytes: validateTemplateBytes(templateBytes, { allowVba: true }), mapping, state, period, now });
+      }
       validateMapping(mapping);
       const input = validateTemplateBytes(templateBytes);
       if (!period || !C.validDay(period.start) || !C.validDay(period.end) || period.start > period.end || (+C.date(period.end) - +C.date(period.start)) / 86400000 >= 366) {
@@ -152,11 +156,9 @@ function createExcelRenderer({ ExcelJS } = {}) {
       }
       const days = C.dates(period.start, period.end);
       if (days.length > mapping.days.capacity) throw invalidMapping("対象期間がテンプレートの日別行数を超えています。");
-      const excel = ExcelJS ?? require("exceljs"), workbook = new excel.Workbook();
-      try { await workbook.xlsx.load(input); }
-      catch { throw invalidTemplate("Excelテンプレートを読み込めませんでした。"); }
-      const sheet = workbook.getWorksheet(mapping.worksheet);
-      if (!sheet) throw invalidMapping("指定されたシートがテンプレートにありません。");
+      let sheet;
+      try { sheet = await require("./xlsx-template.cjs").openXlsxSheet(input, mapping.worksheet); }
+      catch (error) { if (error instanceof ApiError) throw error; throw invalidTemplate("Excelテンプレートを読み込めませんでした。"); }
       const writes = new Map();
       const queue = (target, value) => {
         address(target);
@@ -188,7 +190,7 @@ function createExcelRenderer({ ExcelJS } = {}) {
       // Cell values are replaced only after the entire mapping has been checked.
       // Strings, including a leading '=', remain strings rather than formula objects.
       for (const [target, value] of writes) sheet.getCell(target).value = value;
-      try { return Buffer.from(await workbook.xlsx.writeBuffer()); }
+      try { return Buffer.from(await sheet.save()); }
       catch { throw new ApiError(500, "EXCEL_RENDER_FAILED", "Excelファイルを生成できませんでした。"); }
     }
   };

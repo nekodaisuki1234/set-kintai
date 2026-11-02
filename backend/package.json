@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "日別勤怠APIとテンプレートExcel出力のAWS向け基盤",
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "test": "node --test test/*.test.cjs",
     "provision": "node scripts/provision.cjs"
@@ -13,9 +15,15 @@
     "@aws-sdk/client-s3": "3.1158.0",
     "@aws-sdk/lib-dynamodb": "3.1158.0",
     "@aws-sdk/s3-request-presigner": "3.1158.0",
-    "exceljs": "4.4.0"
+    "@xmldom/xmldom": "0.9.12",
+    "jszip": "3.10.1"
   },
   "overrides": {
-    "exceljs": { "uuid": "11.1.1" }
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  },
+  "devDependencies": {
+    "exceljs": "4.4.0"
   }
 }

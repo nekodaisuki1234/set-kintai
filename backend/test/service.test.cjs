@@ -310,6 +310,30 @@ test("accepted exports retain immutable source snapshots and owner-scoped downlo
   assert.equal((await f.service.getExport(OWNER, result.exportId)).revision, 0);
 });
 
+test("xlsm export uses an explicitly selected, same-owner saved workbook and snapshots only the current settings", async () => {
+  const f = fixture({ [DAY]: work() });
+  const map = { version: 2, layout: "set-report", fiscalYear: 2026, closingDay: 31 };
+  f.templateProvider.load = async () => ({ id: "attendance", version: "v2", bytes: Buffer.from("blank-template"), mapping: map });
+  const prior = { id: "prior", identity: OWNER, period: { start: "2026-09-01", end: "2026-09-30" }, templateId: "attendance", templateVersion: "v2", extension: "xlsm", sha256: "a".repeat(64) };
+  await f.store.commitExport(OWNER, { expectedRevision: 0, entry: prior });
+  let reads = 0;
+  f.exportStorage.read = async entry => { reads++; assert.equal(entry.id, "prior"); return Buffer.from("prior-months-kept"); };
+  f.renderer.render = async args => { assert.equal(args.templateBytes.toString(), "prior-months-kept"); assert.equal(args.state.settings.projects[0].name, "対象月の新PJ"); return Buffer.from("new-month"); };
+  const settings = plain(f.state.settings); settings.projects[0].name = "対象月の新PJ";
+  await f.service.putConfig(OWNER, { expectedRevision: 0, settings, defaults: plain(f.state.defaults) });
+  const request = { expectedRevision: 1, period: { start: "2026-10-01", end: "2026-10-31" }, purpose: "review", baseExportId: "prior" };
+  await f.service.createExport(OWNER, request);
+  assert.equal(reads, 1); assert.deepEqual(f.calls.writes[0].snapshot.base, { exportId: "prior", sha256: "a".repeat(64) });
+  assert.equal(f.calls.writes[0].format.fileName, "作業報告書(2026年10月)_利用者.xlsm");
+  assert.deepEqual(await f.store.getExport(OWNER, "prior"), prior);
+  await assert.rejects(f.service.createExport(OWNER, { ...request, baseExportId: "other-person" }), expected(404, "export_not_found"));
+  assert.equal(reads, 1);
+  await f.store.commitExport(OWNER, { expectedRevision: 1, entry: { ...prior, id: "old-template", templateVersion: "v1" } });
+  await assert.rejects(f.service.createExport(OWNER, { ...request, baseExportId: "old-template" }), expected(422, "base_export_mismatch"));
+  await assert.rejects(f.service.createExport(OWNER, { ...request, baseExportId: "../bad" }), expected(400, "invalid_export_id"));
+  assert.equal(reads, 1);
+});
+
 test("a signing failure after export acceptance leaves the artifact available for retry", async () => {
   const f = fixture({ [DAY]: work() });
   f.exportStorage.sign = async () => { throw new Error("temporary signer failure"); };

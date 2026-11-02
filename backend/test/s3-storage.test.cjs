@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 const { Readable } = require("node:stream");
 const { createS3ExportStorage, createS3TemplateProvider } = require("../src/s3-storage.cjs");
+const { exportFormat, TYPES } = require("../src/export-format.cjs");
 
 const OWNER = { tenantId: "tenant-a", employeeId: "employee-a" };
 const NOW = new Date("2026-10-28T11:00:00Z");
@@ -81,6 +82,33 @@ test("oversized outputs fail before any upload", async () => {
   const f = fixture();
   const storage = createS3ExportStorage({ client: f.client, bucket: "private", commands, maxWorkbookBytes: 2 });
   await assert.rejects(() => storage.write({ identity: OWNER, id: "x", bytes: Buffer.from("long"), snapshot: {} }), code(413, "export_too_large"));
+  assert.equal(f.calls.length, 0);
+});
+
+test("xlsm downloads retain their MIME type, UTF-8 report filename and owner-bound immutable base hash", async () => {
+  const f = fixture(), bytes = Buffer.from("macro-workbook"), format = exportFormat({ version: 2, layout: "set-report" }, { name: "テスト 利用者" }, { end: "2026-10-31" });
+  assert.equal(format.fileName, "作業報告書(2026年10月)_テスト 利用者.xlsm");
+  const result = await f.storage.write({ identity: OWNER, id: "macro-1", bytes, snapshot: { revision: 1 }, format });
+  const entry = { ...result, identity: OWNER, id: "macro-1" };
+  assert.equal(result.key, "outputs/tenant-a/employee-a/macro-1.xlsm");
+  assert.equal(f.calls[0].input.ContentType, TYPES.xlsm);
+  assert.match(f.calls[0].input.ContentDisposition, /filename\*=UTF-8''/);
+  assert.ok(decodeURIComponent(f.calls[0].input.ContentDisposition).endsWith(format.fileName));
+  assert.deepEqual(await f.storage.read(entry), bytes);
+  await f.storage.sign(entry);
+  assert.equal(f.signCalls[0].command.input.ResponseContentType, TYPES.xlsm);
+  assert.equal(f.signCalls[0].command.input.ResponseContentDisposition, f.calls[0].input.ContentDisposition);
+  await assert.rejects(f.storage.read({ ...entry, identity: { ...OWNER, employeeId: "other" } }), code(503, "invalid_export"));
+  f.objects.set(result.key, Buffer.from("tampered"));
+  await assert.rejects(f.storage.read(entry), code(503, "invalid_export"));
+  await f.storage.remove(result); assert.equal(f.objects.size, 0);
+});
+
+test("download names cannot inject headers or paths", async () => {
+  const f = fixture();
+  for (const name of ["evil\r\nHeader.xlsm", "../escape.xlsm", "wrong.xlsx"]) {
+    await assert.rejects(f.storage.write({ identity: OWNER, id: "x", bytes: Buffer.from("x"), snapshot: {}, format: { extension: "xlsm", contentType: TYPES.xlsm, fileName: name } }), code(422, "invalid_export_format"));
+  }
   assert.equal(f.calls.length, 0);
 });
 

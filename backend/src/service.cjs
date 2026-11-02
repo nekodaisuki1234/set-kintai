@@ -3,6 +3,7 @@
 const { randomUUID } = require("node:crypto");
 const { C, RULES_VERSION } = require("./core.cjs");
 const { ApiError } = require("./errors.cjs");
+const { exportFormat } = require("./export-format.cjs");
 
 const RECORD_FIELDS = ["start", "end", "overnight", "breakMinutes", "locationId", "note", "phases", "leave", "sourceDay", "allocation"];
 const SETTINGS_FIELDS = ["attendanceStartDay", "employee", "minHours", "maxHours", "plannedHours", "plannedHoursByMonth", "workSummary", "projects", "places"];
@@ -203,8 +204,9 @@ function createAttendanceService({ store, templateProvider, renderer, exportStor
   }
 
   async function createExport(identity, request) {
-    object(request, ["expectedRevision", "period", "purpose"], ["expectedRevision", "period"]);
+    object(request, ["expectedRevision", "period", "purpose", "baseExportId"], ["expectedRevision", "period"]);
     revision(request.expectedRevision);
+    if (Object.hasOwn(request, "baseExportId") && (typeof request.baseExportId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(request.baseExportId))) fail(400, "invalid_export_id", "引き継ぐ出力番号を確認してください。");
     const period = periodValue(request.period), purpose = request.purpose === undefined ? "checked" : request.purpose;
     if (!["checked", "review"].includes(purpose)) fail(400, "invalid_purpose", "Excel出力の目的を確認してください。");
     const now = serverNow(), context = await read(identity, period);
@@ -219,16 +221,28 @@ function createAttendanceService({ store, templateProvider, renderer, exportStor
     if (!template || !template.id || !template.version || !template.bytes || !template.mapping) {
       fail(501, "template_not_configured", "Excelテンプレートの設定が必要です。");
     }
+    let templateBytes = template.bytes, base = null;
+    if (request.baseExportId) {
+      if (template.mapping.version !== 2 || template.mapping.layout !== "set-report" || typeof exportStorage.read !== "function") fail(422, "base_export_unsupported", "このテンプレートでは過去の帳票を引き継げません。");
+      const entry = await store.getExport(identity, request.baseExportId);
+      if (!entry || entry.identity?.tenantId !== identity.tenantId || entry.identity?.employeeId !== identity.employeeId) fail(404, "export_not_found", "引き継ぐ帳票が見つかりません。");
+      if (entry.templateId !== template.id || entry.templateVersion !== template.version || entry.extension !== "xlsm") fail(422, "base_export_mismatch", "同じ版のテンプレートから作成した本人の帳票を指定してください。");
+      const { reportPeriod } = require("./set-report.cjs");
+      reportPeriod(template.mapping, entry.period); reportPeriod(template.mapping, period);
+      templateBytes = await exportStorage.read(entry);
+      base = { exportId: entry.id, sha256: entry.sha256 };
+    }
     const id = ids();
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) fail(503, "export_id_unavailable", "Excelの出力番号を作成できません。");
     const instant = new Date(now.day + "T" + (now.full || C.time(now.minutes) + ":00") + "+09:00").toISOString();
+    const format = exportFormat(template.mapping, C.employee(state), period);
     const snapshot = copy({ schemaVersion: 1, rulesVersion: RULES_VERSION || String(C.VERSION), identity, revision: context.revision,
       createdAt: instant, period, purpose, validation: checked,
-      template: { id: template.id, version: template.version }, state });
-    const bytes = await renderer.render({ templateBytes: template.bytes, mapping: template.mapping, state: copy(state), period, now });
+      template: { id: template.id, version: template.version }, format, base, state });
+    const bytes = await renderer.render({ templateBytes, mapping: template.mapping, state: copy(state), period, now });
     let stored, accepted = false;
     try {
-      stored = await exportStorage.write({ identity, id, bytes, snapshot });
+      stored = await exportStorage.write({ identity, id, bytes, snapshot, format });
       const entry = { id, identity: copy(identity), revision: context.revision, createdAt: instant, period, purpose,
         templateId: template.id, templateVersion: template.version, validation: checked, ...stored };
       await store.commitExport(identity, { expectedRevision: request.expectedRevision, entry });

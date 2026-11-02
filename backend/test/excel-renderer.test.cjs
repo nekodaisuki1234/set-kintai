@@ -105,10 +105,11 @@ test("template copy preserves unrelated cells, sheets, formulas, formatting and 
   assert.equal(sheet.getCell("I15").value, 8);
   assert.equal(sheet.getCell("K15").value, 0.5);
   assert.equal(sheet.getCell("P15").value, 1);
-  for (const column of Object.values(mapping.days.columns)) assert.equal(sheet.getCell(`${column}12`).value, "", "unused mapped rows are cleared");
+  // Readers represent an empty inline string as either null or an empty string.
+  for (const column of Object.values(mapping.days.columns)) assert.equal(sheet.getCell(`${column}12`).value ?? "", "", "unused mapped rows are cleared");
 });
 
-test("an existing template comment survives ExcelJS comment and VML serialization", async () => {
+test("an existing template comment and VML survive the package-preserving writer", async () => {
   const templateBytes = await template(), originalBytes = Buffer.from(templateBytes);
   const sourceCell = (await load(templateBytes)).getWorksheet("計算").getCell("B3");
   const commentText = note => typeof note === "string" ? note : note.texts.map(part => part.text).join("");
@@ -131,9 +132,9 @@ test("optional phase columns export canonical Japanese labels separately from th
   const sheet = (await load(output)).getWorksheet("勤務表");
   assert.equal(sheet.getCell("S8").value, "設計・テスト・その他");
   assert.equal(sheet.getCell("K8").value, note);
-  assert.equal(sheet.getCell("S10").value, "", "old records with no phase field remain exportable");
-  assert.equal(sheet.getCell("S11").value, "");
-  assert.equal(sheet.getCell("S12").value, "", "unused rows do not inherit phase content");
+  assert.equal(sheet.getCell("S10").value ?? "", "", "old records with no phase field remain exportable");
+  assert.equal(sheet.getCell("S11").value ?? "", "");
+  assert.equal(sheet.getCell("S12").value ?? "", "", "unused rows do not inherit phase content");
   const untouched = await createExcelRenderer().render({ templateBytes: bytes, mapping, state: input, period, now });
   assert.equal((await load(untouched)).getWorksheet("勤務表").getCell("S8").value, null, "an omitted phase mapping creates no new output column");
   assert.deepEqual(input.records[period.start].phases, ["meeting", "test", "design"]);
